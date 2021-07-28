@@ -23,10 +23,8 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
                             recv_req_param;
     int tc_poll = UCC_TL_DPU_TC_POLL, i;
     size_t total_rkey_size = 0;
-    uint64_t pipeline_buffer_size =
-        UCC_TL_DPU_TEAM_LIB(self)->cfg.pipeline_buffer_size;
-    size_t   pipeline_buffers =
-        UCC_TL_DPU_TEAM_LIB(self)->cfg.pipeline_buffers;
+    size_t pipeline_buffer_size = ctx->cfg.pipeline.buffer_size;
+    size_t pipeline_buffers = ctx->cfg.pipeline.num_buffers;
     
     self->coll_id   = 0;
     self->size      = params->params.oob.participants;
@@ -275,10 +273,8 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
     ucc_status_t            ucc_status = UCC_OK;
     int                     tc_poll = UCC_TL_DPU_TC_POLL, i = 0;
     size_t                  total_rkey_size;
-    uint64_t pipeline_buffer_size =
-        UCC_TL_DPU_TEAM_LIB(team)->cfg.pipeline_buffer_size;
-    size_t pipeline_buffers =
-        UCC_TL_DPU_TEAM_LIB(team)->cfg.pipeline_buffers;
+    size_t pipeline_buffer_size = ctx->cfg.pipeline.buffer_size;
+    size_t pipeline_buffers = ctx->cfg.pipeline.num_buffers;
     ucp_request_param_t     recv_req_param;
 
     if (UCC_OK == team->status) {
