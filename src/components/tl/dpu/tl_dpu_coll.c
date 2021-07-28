@@ -291,7 +291,7 @@ ucc_status_t ucc_tl_dpu_allreduce_start(ucc_coll_task_t *coll_task)
     }
     
     task->block_count = ucc_min(
-        (UCC_TL_DPU_TEAM_LIB(team)->cfg.pipeline_buffer_size) / dt_size,
+        (ctx->cfg.pipeline.buffer_size) / dt_size,
         count_total);
 
     req_param = &task->task_reqs.req_param;
@@ -331,8 +331,9 @@ put_err:
 
 ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
 {
-    ucc_coll_args_t     *coll_args = &task->args;
-    ucc_tl_dpu_team_t   *team      = task->team;
+    ucc_coll_args_t      *coll_args = &task->args;
+    ucc_tl_dpu_team_t    *team      = task->team;
+    ucc_tl_dpu_context_t *ctx       = UCC_TL_DPU_TEAM_CTX(team);
 
     if (task->args.mask & UCC_COLL_ARGS_FIELD_USERDEFINED_REDUCTIONS) {
         tl_error(UCC_TL_TEAM_LIB(task->team),
@@ -355,8 +356,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     task->put_sync.coll_type         = coll_args->coll_type;
     task->get_sync.coll_id           = 0;
     task->get_sync.count_serviced    = 0;
-    task->pipeline_buffers           =
-        (UCC_TL_DPU_TEAM_LIB(task->team)->cfg.pipeline_buffers);
+    task->pipeline_buffers           = ctx->cfg.pipeline.num_buffers;
 
     /* Initialize all request stuff for pipelining */
     memset(&task->task_reqs.req_param, 0, sizeof(ucp_request_param_t));

@@ -26,7 +26,9 @@
 #define MAX_DPU_HOST_NAME 256
 
 #define UCC_TL_DPU_PIPELINE_BLOCK_SIZE_MIN 1024
-#define UCC_TL_DPU_PIPELINE_BUFFERS_MIN 2
+#define UCC_TL_DPU_PIPELINE_BLOCK_SIZE_MAX 1l<<30
+#define UCC_TL_DPU_PIPELINE_BUFFERS_MIN 1
+#define UCC_TL_DPU_PIPELINE_BUFFERS_MAX 1024
 
 typedef enum {
     UCC_TL_DPU_UCP_REQUEST_ACTIVE,
@@ -42,10 +44,13 @@ typedef struct ucc_tl_dpu_iface {
 } ucc_tl_dpu_iface_t;
 extern ucc_tl_dpu_iface_t ucc_tl_dpu;
 
+typedef struct ucc_tl_dpu_pipeline_info {
+    size_t buffer_size;
+    size_t num_buffers;
+} ucc_tl_dpu_pipeline_info_t;
+
 typedef struct ucc_tl_dpu_lib_config {
     ucc_tl_lib_config_t super;
-    uint64_t            pipeline_buffer_size;
-    uint32_t            pipeline_buffers;
 } ucc_tl_dpu_lib_config_t;
 
 typedef struct ucc_tl_dpu_context_config {
@@ -53,6 +58,7 @@ typedef struct ucc_tl_dpu_context_config {
     uint32_t                server_port;
     char                    *server_hname;
     char                    *host_dpu_list;
+    ucc_tl_dpu_pipeline_info_t pipeline;
 } ucc_tl_dpu_context_config_t;
 
 typedef struct ucc_tl_dpu_lib {
@@ -103,6 +109,7 @@ typedef struct ucc_tl_dpu_connect_s {
     size_t                  rem_rkeys_lengths[3];
     void                    *rem_rkeys;
     uint64_t                rem_addresses[3];
+    ucc_tl_dpu_pipeline_info_t pipeline;
 } ucc_tl_dpu_conn_buf_t;
 
 typedef struct ucc_tl_dpu_team {
