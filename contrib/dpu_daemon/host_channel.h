@@ -28,8 +28,6 @@
 #define ERROR               1
 #define DEFAULT_PORT        13337
 
-#define DATA_BUFFER_SIZE     (128*1024*1024)
-
 #define EXCHANGE_LENGTH_TAG 1ull
 #define EXCHANGE_RKEY_TAG 2ull
 #define EXCHANGE_ADDR_TAG 3ull
@@ -73,6 +71,11 @@ typedef struct dpu_mem_segs_s {
     dpu_mem_t get;
 } dpu_mem_segs_t;
 
+typedef struct dpu_pipeline_info_s {
+    size_t buffer_size;
+    size_t num_buffers;
+} dpu_pipeline_info_t;
+
 typedef struct dpu_hc_s {
     /* TCP/IP stuff */
     char *hname;
@@ -92,18 +95,14 @@ typedef struct dpu_hc_s {
     uint64_t sync_addr;
     ucp_rkey_h sync_rkey;
 
-    /* bufer size*/
-    size_t data_buffer_size;
+    /* pipeline buffer */
+    dpu_pipeline_info_t pipeline;
 } dpu_hc_t;
 
 int dpu_hc_init(dpu_hc_t *dpu_hc);
 int dpu_hc_accept(dpu_hc_t *hc);
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t coll_sync);
 int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id);
-unsigned int        dpu_hc_get_count_total(dpu_hc_t *hc);
-unsigned int        dpu_hc_get_count_in(dpu_hc_t *hc);
-ucc_datatype_t      dpu_hc_get_dtype(dpu_hc_t *hc);
-ucc_reduction_op_t  dpu_hc_get_op(dpu_hc_t *hc);
 
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);
 

@@ -84,7 +84,22 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
     UCC_CLASS_CALL_SUPER_INIT(ucc_tl_context_t, tl_dpu_config->super.tl_lib,
                               params->context);
+    
+    if (tl_dpu_config->pipeline.buffer_size > 0) {
+        tl_dpu_config->pipeline.buffer_size &= -8;
+    }
+    tl_dpu_config->pipeline.buffer_size = 
+            ucc_min(tl_dpu_config->pipeline.buffer_size, UCC_TL_DPU_PIPELINE_BLOCK_SIZE_MAX);
+    tl_dpu_config->pipeline.buffer_size = 
+            ucc_max(tl_dpu_config->pipeline.buffer_size, UCC_TL_DPU_PIPELINE_BLOCK_SIZE_MIN);
+    tl_dpu_config->pipeline.num_buffers =
+            ucc_min(tl_dpu_config->pipeline.num_buffers, UCC_TL_DPU_PIPELINE_BUFFERS_MAX);
+    tl_dpu_config->pipeline.num_buffers =
+            ucc_max(tl_dpu_config->pipeline.num_buffers, UCC_TL_DPU_PIPELINE_BUFFERS_MIN);
     memcpy(&self->cfg, tl_dpu_config, sizeof(*tl_dpu_config));
+
+    tl_info(self->super.super.lib, "pipeline block size: %lu, num buffers: %lu",
+            tl_dpu_config->pipeline.buffer_size, tl_dpu_config->pipeline.num_buffers);
 
     /* Find  DPU based on the host-dpu list */
     gethostname(hname, sizeof(hname) - 1);
@@ -175,6 +190,12 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     ret = send(sockfd, worker_attr.address, worker_attr.address_length, 0);
     if (ret < 0) {
         tl_error(self->super.super.lib, "send address failed");
+        ucc_status = UCC_ERR_NO_MESSAGE;
+        goto err;
+    }
+    ret = send(sockfd, &tl_dpu_config->pipeline, sizeof(tl_dpu_config->pipeline), 0);
+    if (ret < 0) {
+        tl_error(self->super.super.lib, "send pipeline info failed");
         ucc_status = UCC_ERR_NO_MESSAGE;
         goto err;
     }

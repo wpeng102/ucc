@@ -148,7 +148,7 @@ static int _dpu_ucx_init(dpu_hc_t *hc)
     ucp_params_t ucp_params;
     ucs_status_t status;
     ucp_worker_params_t worker_params;
-    int ret = SUCCESS;
+    int ret = UCC_OK;
 
 //     printf ("%s\n", __FUNCTION__);
 
@@ -183,6 +183,7 @@ static int _dpu_ucx_init(dpu_hc_t *hc)
     hc->worker_attr.address_flags = UCP_WORKER_ADDRESS_FLAG_NET_ONLY;
     status = ucp_worker_query (hc->ucp_worker, &hc->worker_attr);
     if (UCS_OK != status) {
+        fprintf(stderr, "failed to ucp_worker_query (%s)\n", ucs_status_string(status));
         ret = UCC_ERR_NO_MESSAGE;
         goto err_worker;
     }
@@ -201,7 +202,6 @@ static int _dpu_ucx_fini(dpu_hc_t *hc){
     ucp_worker_destroy(hc->ucp_worker);
     ucp_cleanup(hc->ucp_ctx);
 }
-
 
 static int _dpu_hc_buffer_alloc(dpu_hc_t *hc, dpu_mem_t *mem, size_t size)
 {
@@ -265,13 +265,34 @@ static int _dpu_hc_buffer_free(dpu_hc_t *hc, dpu_mem_t *mem)
     free(mem->base);
 }
 
-
-static size_t _dpu_set_buffer_size(char *_env)
+static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
 {
-    char *env = getenv(_env);
-    return env != NULL ? atol(env) : DATA_BUFFER_SIZE;
+    int ret;
+    size_t data_buffer_size = hc->pipeline.buffer_size * hc->pipeline.num_buffers;
+    fprintf(stderr, "buffer_size: %lu, num_buffers: %lu\n", hc->pipeline.buffer_size, hc->pipeline.num_buffers);
+
+    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.put, data_buffer_size);
+    if (ret) {
+        goto out;
+    }
+    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.get, data_buffer_size);
+    if (ret) {
+        goto err_put;
+    }
+    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.sync, sizeof(dpu_put_sync_t));
+    if (ret) {
+        goto err_get;
+    }
+
+    goto out;
+err_get:
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.get);
+err_put:
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.put);
+out:
+    return ret;
 }
- 
+
 int dpu_hc_init(dpu_hc_t *hc)
 {
     int ret = UCC_OK;
@@ -290,27 +311,7 @@ int dpu_hc_init(dpu_hc_t *hc)
         goto err_ip;
     }
 
-    /* set buffer size */
-    hc->data_buffer_size = _dpu_set_buffer_size("DPU_DATA_BUFFER_SIZE");
-
-    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.put, DATA_BUFFER_SIZE);
-    if (ret) {
-        goto err_ucx;
-    }
-    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.get, DATA_BUFFER_SIZE);
-    if (ret) {
-        goto err_put;
-    }
-    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.sync, sizeof(dpu_put_sync_t));
-    if (ret) {
-        goto err_get;
-    }
-
     goto out;
-err_get:
-    _dpu_hc_buffer_free(hc, &hc->mem_segs.get);
-err_put:
-    _dpu_hc_buffer_free(hc, &hc->mem_segs.put);
 err_ucx:
     _dpu_ucx_fini(hc);
 err_ip:
@@ -531,6 +532,8 @@ int dpu_hc_accept(dpu_hc_t *hc)
     hc->connfd = accept(hc->listenfd, (struct sockaddr*)NULL, NULL);
     if (-1 == hc->connfd) {
         fprintf(stderr, "Error in accept (%s)!\n", strerror(errno));
+        ret = UCC_ERR_NO_MESSAGE;
+        goto err;
     }
 //     fprintf (stderr, "Connection established\n");
 
@@ -572,6 +575,18 @@ int dpu_hc_accept(dpu_hc_t *hc)
         goto err;
     }
 
+    ret = recv(hc->connfd, &hc->pipeline, sizeof(hc->pipeline), MSG_WAITALL);
+    if (-1 == ret) {
+        fprintf(stderr, "recv pipeline info failed!\n");
+        ret = UCC_ERR_NO_MESSAGE;
+        goto err;
+    }
+
+    ret = _dpu_hc_init_pipeline(hc);
+    if (ret) {
+        goto err;
+    }
+
     ret = _dpu_rmem_setup(hc);
     if (ret) {
         fprintf(stderr, "exchange data failed!\n");
@@ -594,30 +609,6 @@ int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id)
     }
 
     return 0;
-}
-
-ucc_datatype_t dpu_hc_get_dtype(dpu_hc_t *hc)
-{
-    dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
-    return lsync->dtype;
-}
-
-ucc_reduction_op_t dpu_hc_get_op(dpu_hc_t *hc)
-{
-    dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
-    return lsync->op;
-}
-
-unsigned int dpu_hc_get_count_total(dpu_hc_t *hc)
-{
-    dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
-    return lsync->count_total;
-}
-
-unsigned int dpu_hc_get_count_in(dpu_hc_t *hc)
-{
-    dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
-    return lsync->count_in;
 }
 
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t coll_sync)
