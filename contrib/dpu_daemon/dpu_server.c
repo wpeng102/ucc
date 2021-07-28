@@ -17,17 +17,12 @@
 #define CORES 8
 #define MAX_THREADS 128
 
-#define DPU_PIPELINE_BUFFER_SIZE (4 * 1024 * 1024)
-#define DPU_PIPELINE_BUFFERS     (2)
-
 typedef struct thread_ctx_s {
     pthread_t       id;
     int             idx;
     int             nthreads;
     dpu_ucc_comm_t  comm;
     dpu_hc_t        *hc;
-    unsigned long   pipeline_buffer_size;
-    unsigned int    pipeline_buffers;
     unsigned int    buf_idx;
     dpu_get_sync_t  coll_sync;
 } thread_ctx_t;
@@ -62,10 +57,10 @@ static void dpu_thread_set_affinity(thread_ctx_t *ctx)
 static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, size_t *count_p)
 {
     size_t dt_size = dpu_ucc_dt_size(tmp_sync.dtype);
-    size_t max_elems = ctx->pipeline_buffer_size/dt_size;
+    size_t max_elems = ctx->hc->pipeline.buffer_size/dt_size;
     size_t count = DPU_MIN(max_elems, (tmp_sync.count_in - ctx->coll_sync.count_serviced));
     size_t block = count / ctx->nthreads;
-    size_t offset = ctx->buf_idx * ctx->pipeline_buffer_size + block * ctx->idx * dt_size;
+    size_t offset = ctx->buf_idx * ctx->hc->pipeline.buffer_size + block * ctx->idx * dt_size;
     *count_p = count;
     
     DPU_LOG("count %lu, block %lu, offset %lu\n", count, block, offset);
@@ -252,7 +247,7 @@ void *dpu_worker(void *arg)
             }
             
             ctx->coll_sync.count_serviced += count_serviced;
-            ctx->buf_idx = (ctx->buf_idx + 1) % ctx->pipeline_buffers;
+            ctx->buf_idx = (ctx->buf_idx + 1) % ctx->hc->pipeline.num_buffers;
 
             DPU_LOG("Done data, count serviced: %lu\n", ctx->coll_sync.count_serviced);
             dpu_mark_work_done(ctx);
@@ -270,8 +265,6 @@ int main(int argc, char **argv)
 {
 //     fprintf (stderr, "%s\n", __FUNCTION__);
 //     sleep(20);
-    unsigned long    pipeline_buffer_size = DPU_PIPELINE_BUFFER_SIZE;
-    unsigned int     pipeline_buffers = DPU_PIPELINE_BUFFERS;
     int              nthreads = 0;
     int              i = 0;
     thread_ctx_t     *tctx_pool = NULL;
@@ -292,16 +285,6 @@ int main(int argc, char **argv)
     }
     printf("DPU daemon: Running with %d threads\n", nthreads);
 
-    env = getenv("DPU_PIPELINE_BUFFER_SIZE");
-    if (NULL != env) {
-        pipeline_buffer_size = atol(env);
-    }
-
-    env = getenv("DPU_PIPELINE_BUFFERS");
-    if (NULL != env) {
-        pipeline_buffers = atoi(env);
-    }
-
     tctx_pool = calloc(nthreads, sizeof(*tctx_pool));
     UCC_CHECK(dpu_ucc_init(argc, argv, &ucc_glob));
 
@@ -315,8 +298,8 @@ int main(int argc, char **argv)
 
     hc = &hc_b;
 
-    dpu_hc_init(hc);
-    dpu_hc_accept(hc);
+    UCC_CHECK(dpu_hc_init(hc));
+    UCC_CHECK(dpu_hc_accept(hc));
 
     for(i = 0; i < nthreads; i++) {
         UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &tctx_pool[i].comm));
@@ -325,8 +308,6 @@ int main(int argc, char **argv)
         tctx_pool[i].hc       = hc;
         tctx_pool[i].coll_sync.coll_id = 0;
         tctx_pool[i].coll_sync.count_serviced = 0;
-        tctx_pool[i].pipeline_buffers = pipeline_buffers;
-        tctx_pool[i].pipeline_buffer_size = pipeline_buffer_size;
         tctx_pool[i].buf_idx = 0;
 
         if (i < nthreads - 1) {
