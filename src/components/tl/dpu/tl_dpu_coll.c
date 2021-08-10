@@ -87,7 +87,81 @@ static int ucc_tl_dpu_putq_available(ucc_tl_dpu_task_t *task)
     return puts_in_flight < capacity;
 }
 
-static void ucc_tl_dpu_init_put(
+static ucs_status_t ucc_tl_dpu_register_buf(
+    ucp_context_h ucp_ctx,
+    void *base, size_t size,
+    ucc_tl_dpu_rkey_t *rkey)
+{
+    ucp_mem_attr_t mem_attr;
+    ucs_status_t status;
+    ucp_mem_map_params_t mem_params = {
+        .address = base,
+        .length = size,
+        .field_mask = UCP_MEM_MAP_PARAM_FIELD_FLAGS  |
+                      UCP_MEM_MAP_PARAM_FIELD_LENGTH |
+                      UCP_MEM_MAP_PARAM_FIELD_ADDRESS,
+    };
+
+    status = ucp_mem_map(ucp_ctx, &mem_params, &rkey->memh);
+    if (status != UCS_OK) {
+        fprintf(stderr, "failed to ucp_mem_map (%s)\n", ucs_status_string(status));
+        goto out;
+    }
+
+    mem_attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS |
+                          UCP_MEM_ATTR_FIELD_LENGTH;
+
+    status = ucp_mem_query(rkey->memh, &mem_attr);
+    if (status != UCS_OK) {
+        fprintf(stderr, "failed to ucp_mem_query (%s)\n", ucs_status_string(status));
+        goto err_map;
+    }
+    assert(mem_attr.length == size);
+    assert(mem_attr.address == base);
+
+    status = ucp_rkey_pack(ucp_ctx, rkey->memh, &rkey->rkey_buf, &rkey->rkey_buf_size);
+    if (status != UCS_OK) {
+        fprintf(stderr, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status));
+        goto err_map;
+    }
+
+    goto out;
+err_map:
+    ucp_mem_unmap(ucp_ctx, rkey->memh);
+out:
+    return status;
+}
+
+static void ucc_tl_dpu_deregister_buf(
+    ucp_context_h ucp_ctx, ucc_tl_dpu_rkey_t *rkey)
+{
+    ucp_mem_unmap(ucp_ctx, rkey->memh);
+    ucp_rkey_buffer_release(rkey->rkey_buf);
+}
+
+static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
+{
+    ucc_status_t status = UCC_OK;
+    ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(task->team);
+    void *src_buf = task->args.src.info.buffer;
+    void *dst_buf = task->args.dst.info.buffer;
+    size_t src_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
+    size_t dst_len = task->args.dst.info.count * ucc_dt_size(task->args.dst.info.datatype);
+
+    status |= ucc_tl_dpu_register_buf(ctx->ucp_context, src_buf, src_len, &task->src_rkey);
+    status |= ucc_tl_dpu_register_buf(ctx->ucp_context, dst_buf, dst_len, &task->dst_rkey);
+
+    return status;
+}
+
+static void ucc_tl_dpu_finalize_rkeys(ucc_tl_dpu_task_t *task)
+{
+    ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(task->team);
+    ucc_tl_dpu_deregister_buf(ctx->ucp_context, &task->src_rkey);
+    ucc_tl_dpu_deregister_buf(ctx->ucp_context, &task->dst_rkey);
+}
+
+static void ucc_tl_dpu_init_put(ucc_tl_dpu_context_t *ctx,
     ucc_tl_dpu_task_t *task, ucc_tl_dpu_team_t *team,
     size_t *count_p, size_t *data_size_p, size_t *offset_p)
 {
@@ -117,7 +191,7 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     ucc_tl_dpu_put_request_t *put_req = &task->task_reqs.put_reqs[put_idx];
     size_t count, data_size, offset;
 
-    ucc_tl_dpu_init_put(task, team, &count, &data_size, &offset);
+    ucc_tl_dpu_init_put(ctx, task, team, &count, &data_size, &offset);
     put_req->data_req =
         ucp_put_nbx(ctx->ucp_ep, ((char *)sbuf + offset), data_size,
                     team->rem_data_in[put_idx], team->rem_data_in_key,
@@ -503,6 +577,7 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
 {
     ucc_tl_dpu_task_t *task = ucc_derived_of(coll_task, ucc_tl_dpu_task_t);
     tl_info(task->team->super.super.context->lib, "finalizing task %p", task);
+    ucc_tl_dpu_finalize_rkeys(task);
     ucc_tl_dpu_free_task(task);
     return UCC_OK;
 }
@@ -543,6 +618,7 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
         return status;
     }
 
+    ucc_tl_dpu_init_rkeys(task);
     tl_info(team->context->lib, "init coll req %p", task);
     *task_h = &task->super;
     return status;
