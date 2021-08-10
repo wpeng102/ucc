@@ -22,6 +22,7 @@
 #include <ucc/api/ucc.h>
 #include <ucp/api/ucp.h>
 
+#define MAX_RKEY_LEN        256
 #define IP_STRING_LEN       50
 #define PORT_STRING_LEN     8
 #define SUCCESS             0
@@ -38,9 +39,17 @@ typedef struct dpu_req_s {
     int complete;
 } dpu_req_t;
 
+typedef struct host_rkey_s {
+    char src_rkey[MAX_RKEY_LEN];
+    char dst_rkey[MAX_RKEY_LEN];
+    size_t src_rkey_len;
+    size_t dst_rkey_len;
+} host_rkey_t;
+
 /* sync struct type
  * use it for counter, dtype, ar op, length */
 typedef struct dpu_put_sync_s {
+    host_rkey_t         rkeys;
     ucc_datatype_t      dtype;
     ucc_reduction_op_t  op;
     ucc_coll_type_t     coll_type;

@@ -24,6 +24,7 @@
 #define UCC_TL_DPU_EXCHANGE_ADDR_TAG 3ull
 
 #define MAX_DPU_HOST_NAME 256
+#define MAX_RKEY_LEN      256
 
 #define UCC_TL_DPU_PIPELINE_BLOCK_SIZE_MIN 1024
 #define UCC_TL_DPU_PIPELINE_BLOCK_SIZE_MAX 1l<<30
@@ -78,7 +79,15 @@ typedef struct ucc_tl_dpu_context {
 UCC_CLASS_DECLARE(ucc_tl_dpu_context_t, const ucc_base_context_params_t *,
                   const ucc_base_config_t *);
 
+typedef struct ucc_tl_dpu_rkeys_t {
+    char src_rkey[MAX_RKEY_LEN];
+    char dst_rkey[MAX_RKEY_LEN];
+    size_t src_rkey_len;
+    size_t dst_rkey_len;
+} ucc_tl_dpu_put_rkeys_t;
+
 typedef struct ucc_tl_dpu_put_sync_t {
+    ucc_tl_dpu_put_rkeys_t   rkeys;
     ucc_datatype_t           dtype;
     ucc_reduction_op_t       op;
     ucc_coll_type_t          coll_type;
@@ -142,7 +151,14 @@ typedef struct ucc_tl_dpu_task_req_t {
     uint32_t                 put_bf_idx;
     uint32_t                 get_bf_idx;
     uint32_t                 puts_in_flight;
+
 } ucc_tl_dpu_task_req_t;
+
+typedef struct ucc_tl_dpu_rkey_t {
+    ucp_mem_h memh;
+    void     *rkey_buf;
+    size_t    rkey_buf_size;
+} ucc_tl_dpu_rkey_t;
 
 typedef struct ucc_tl_dpu_task {
     ucc_coll_task_t          super;
@@ -154,6 +170,8 @@ typedef struct ucc_tl_dpu_task {
     size_t                   block_count;
     size_t                   block_data_size;
     uint32_t                 pipeline_buffers;
+    ucc_tl_dpu_rkey_t        src_rkey;
+    ucc_tl_dpu_rkey_t        dst_rkey;
 } ucc_tl_dpu_task_t;
 
 typedef struct ucc_tl_dpu_config {
