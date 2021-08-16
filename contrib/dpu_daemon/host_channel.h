@@ -44,6 +44,8 @@ typedef struct host_rkey_s {
     char dst_rkey[MAX_RKEY_LEN];
     size_t src_rkey_len;
     size_t dst_rkey_len;
+    void *src_buf;
+    void *dst_buf;
 } host_rkey_t;
 
 /* sync struct type
@@ -95,6 +97,7 @@ typedef struct dpu_hc_s {
     ucp_context_h ucp_ctx;
     ucp_worker_h ucp_worker;
     ucp_worker_attr_t worker_attr;
+    ucp_request_param_t req_param;
     union {
         dpu_mem_segs_t mem_segs;
         dpu_mem_t mem_segs_array[3];
@@ -112,6 +115,9 @@ int dpu_hc_init(dpu_hc_t *dpu_hc);
 int dpu_hc_accept(dpu_hc_t *hc);
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t coll_sync);
 int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id);
+
+int dpu_hc_get_data(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync);
+int dpu_hc_put_data(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync);
 
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);
 
