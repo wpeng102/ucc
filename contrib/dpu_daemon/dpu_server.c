@@ -180,7 +180,7 @@ static void dpu_mark_work_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
             while(!thread_sub_sync[i].done);
         }
         //dpu_hc_put_data(ctx->hc, lsync);
-        //dpu_hc_reply(ctx->hc, ctx->coll_sync);
+        //dpu_hc_reply(ctx->hc, &ctx->coll_sync);
     }
 }
 
@@ -195,9 +195,9 @@ static void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
         for (i = 0; i < ctx->nthreads; i++) {
             while(!thread_main_sync[i].done);
         }
+        dpu_hc_put_data(ctx->hc, lsync);
+        dpu_hc_reply(ctx->hc, &ctx->coll_sync);
     }
-    dpu_hc_put_data(ctx->hc, lsync);
-    dpu_hc_reply(ctx->hc, ctx->coll_sync);
 }
 
 void *dpu_worker(void *arg)
@@ -219,7 +219,7 @@ void *dpu_worker(void *arg)
         ucc_coll_type_t coll_type = lsync->coll_type;
         size_t count_total        = lsync->count_total;
         DPU_LOG("Start coll id: %d, type: %d, count total: %lu, count in: %lu\n",
-                coll_id, coll_type, count_total, lsync->count_in);
+                coll_id, coll_type, count_total, (size_t)lsync->count_in);
         
         if (coll_type == UCC_COLL_TYPE_LAST) {
             /* Hang up */

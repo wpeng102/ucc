@@ -147,8 +147,9 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
     void *src_buf = task->args.src.info.buffer;
     void *dst_buf = task->args.dst.info.buffer;
     size_t src_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
-    size_t dst_len = task->args.dst.info.count * ucc_dt_size(task->args.dst.info.datatype);
+    size_t dst_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
 
+    fprintf(stderr, "src count: %lu, len: %zu, dst count %lu, len %zu\n", task->args.src.info.count, src_len, task->args.dst.info.count, dst_len);
     status |= ucc_tl_dpu_register_buf(ctx->ucp_context, src_buf, src_len, &task->src_rkey);
     status |= ucc_tl_dpu_register_buf(ctx->ucp_context, dst_buf, dst_len, &task->dst_rkey);
 
@@ -187,8 +188,8 @@ static void ucc_tl_dpu_init_put(ucc_tl_dpu_context_t *ctx,
     memcpy(task->put_sync.rkeys.dst_rkey, task->dst_rkey.rkey_buf, task->dst_rkey.rkey_buf_size);
     task->put_sync.rkeys.src_rkey_len = task->src_rkey.rkey_buf_size;
     task->put_sync.rkeys.dst_rkey_len = task->dst_rkey.rkey_buf_size;
-    task->put_sync.rkeys.src_buf = task->src_rkey.rkey_buf;
-    task->put_sync.rkeys.dst_buf = task->dst_rkey.rkey_buf;
+    task->put_sync.rkeys.src_buf = task->args.src.info.buffer;
+    task->put_sync.rkeys.dst_buf = task->args.dst.info.buffer;
 }
 
 static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
@@ -286,7 +287,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
 {
     int i = 0, j = 0, coll_poll = UCC_TL_DPU_COLL_POLL;
     ucc_tl_dpu_put_request_t *put_req;
-    ucc_tl_dpu_get_request_t *get_req;
+    //ucc_tl_dpu_get_request_t *get_req;
     ucc_status_t status;
 
     ucp_worker_progress(ctx->ucp_worker);
@@ -296,10 +297,10 @@ static ucc_status_t ucc_tl_dpu_check_progress(
 
         for (j = 0; j < task->pipeline_buffers; j++) {
             put_req = &task->task_reqs.put_reqs[j];
-            get_req = &task->task_reqs.get_reqs[j];
-            status |= ucc_tl_dpu_req_test(&put_req->data_req, ctx->ucp_worker);
+            //get_req = &task->task_reqs.get_reqs[j];
+            //status |= ucc_tl_dpu_req_test(&put_req->data_req, ctx->ucp_worker);
             status |= ucc_tl_dpu_req_test(&put_req->sync_req, ctx->ucp_worker);
-            status |= ucc_tl_dpu_req_test(&get_req->data_req, ctx->ucp_worker);
+            //status |= ucc_tl_dpu_req_test(&get_req->data_req, ctx->ucp_worker);
         }
 
         if (UCC_OK == status) {
@@ -317,13 +318,14 @@ static ucc_status_t ucc_tl_dpu_check_progress(
     }
     #endif
 
+    __sync_synchronize();
     ucc_tl_dpu_team_t *team = task->team;
     if (UCC_OK == status) {
         if (team->get_sync.count_serviced < task->args.src.info.count) {
+            //fprintf(stderr, "serviced: %zu\n", (size_t)team->get_sync.count_serviced);
             return UCC_INPROGRESS;
         } else {
             fprintf(stderr, "DONE");
-            task->task_reqs.get_bf_idx = (task->task_reqs.get_bf_idx + 1) % task->pipeline_buffers;
             task->task_reqs.get_data_count = task->args.src.info.count;
             task->task_reqs.puts_in_flight--;
             return UCC_OK;
@@ -364,6 +366,9 @@ ucc_status_t ucc_tl_dpu_allreduce_progress(ucc_coll_task_t *coll_task)
     }
     #endif
 
+    //fprintf(stderr, "put %lu get %lu total %lu serviced %lu\n",
+    //    (size_t)task->task_reqs.put_data_count, (size_t)task->task_reqs.get_data_count,
+    //    count_total, (size_t)team->get_sync.count_serviced);
     status = ucc_tl_dpu_check_progress(task, ctx);
     task->super.super.status = status;
 
