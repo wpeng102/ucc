@@ -131,6 +131,7 @@ static void tag_recv_cb (void *request, ucs_status_t status,
                          const ucp_tag_recv_info_t *info, void *user_data)
 {
     dpu_req_t *ctx = user_data;
+
     ctx->complete = 1;
 }
 
@@ -209,10 +210,11 @@ static int _dpu_ucx_init(dpu_hc_t *hc)
 
     ucp_request_param_t *req_param = &hc->req_param;
     req_param->op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                              UCP_OP_ATTR_FIELD_DATATYPE;
+                              UCP_OP_ATTR_FIELD_DATATYPE |
+                              UCP_OP_ATTR_FIELD_USER_DATA;
     req_param->datatype     = ucp_dt_make_contig(1);
     req_param->cb.send      = send_cb;
-    req_param->cb.recv      = tag_recv_cb;
+    //req_param->cb.recv      = tag_recv_cb;
 
     return ret;
 err_worker:
@@ -288,21 +290,29 @@ int dpu_hc_get_data(dpu_hc_t *hc, dpu_put_sync_t *sync)
 {
     int ret;
     void *request;
-    dpu_req_t req_ctx;
+    dpu_req_t req_ctx = {0};
     ucs_status_t status;
     ucp_rkey_h src_rkey;
     host_rkey_t *rkeys = &sync->rkeys;
     void *src_addr = sync->rkeys.src_buf;
     size_t dt_size = dpu_ucc_dt_size(sync->dtype);
     size_t data_size = sync->count_total * dt_size;
-    hc->req_param.user_data = &req_ctx;
+    ucp_request_param_t req_param;
+    req_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                             UCP_OP_ATTR_FIELD_DATATYPE |
+                             UCP_OP_ATTR_FIELD_USER_DATA;
+    req_param.datatype     = ucp_dt_make_contig(1);
+    req_param.cb.send      = send_cb;
+    req_param.user_data    = &req_ctx;
 
+    fprintf(stderr, "req_ctx: %p data_size %zu src_addr %p\n", &req_ctx, data_size, src_addr);
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->src_rkey, &src_rkey);
 
     request = ucp_get_nbx(hc->host_ep, hc->mem_segs.put.base, data_size,
-            (uint64_t)src_addr, src_rkey, &hc->req_param);
+            (uint64_t)src_addr, src_rkey, &req_param);
 
     ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
+    ucp_worker_fence(hc->ucp_worker);
     return ret;
 }
 
@@ -310,21 +320,28 @@ int dpu_hc_put_data(dpu_hc_t *hc, dpu_put_sync_t *sync)
 {
     int ret;
     void *request;
-    dpu_req_t req_ctx;
+    dpu_req_t req_ctx = {0};
     ucs_status_t status;
     ucp_rkey_h dst_rkey;
     host_rkey_t *rkeys = &sync->rkeys;
     void *dst_addr = sync->rkeys.dst_buf;
     size_t dt_size = dpu_ucc_dt_size(sync->dtype);
     size_t data_size = sync->count_total * dt_size;
-    hc->req_param.user_data = &req_ctx;
+    ucp_request_param_t req_param;
+    req_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                             UCP_OP_ATTR_FIELD_DATATYPE |
+                             UCP_OP_ATTR_FIELD_USER_DATA;
+    req_param.datatype     = ucp_dt_make_contig(1);
+    req_param.cb.send      = send_cb;
+    req_param.user_data    = &req_ctx;
 
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->dst_rkey, &dst_rkey);
 
     request = ucp_put_nbx(hc->host_ep, hc->mem_segs.get.base, data_size,
-            (uint64_t)dst_addr, dst_rkey, &hc->req_param);
+            (uint64_t)dst_addr, dst_rkey, &req_param);
 
     ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
+    ucp_worker_fence(hc->ucp_worker);
     return ret;
 }
 
@@ -446,6 +463,7 @@ static ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, void *request,
 
     /* immediate completion */
     if (request == NULL) {
+        fprintf(stderr, "Immediate completion\n");
         return UCS_OK;
     }
 
@@ -681,7 +699,7 @@ int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id)
     return 0;
 }
 
-int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t coll_sync)
+int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
 {
     // dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
     ucp_request_param_t req_param;
@@ -700,14 +718,15 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t coll_sync)
 //     while( lsync->itt < cntr) {
 //         ucp_worker_progress(hc->ucp_worker);
 //     }
-    fprintf(stderr, "coll_id: %d, serviced: %lu\n", coll_sync.coll_id, coll_sync.count_serviced);
-    request = ucp_put_nbx(hc->host_ep, &coll_sync, sizeof(coll_sync),
+    fprintf(stderr, "addr: %p, coll_id: %d, serviced: %lu\n", hc->sync_addr, coll_sync->coll_id, coll_sync->count_serviced);
+    request = ucp_put_nbx(hc->host_ep, coll_sync, sizeof(dpu_get_sync_t),
                           hc->sync_addr, hc->sync_rkey,
                           &req_param);
     ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
     if (ret) {
         return -1;
     }
+    ucp_worker_fence(hc->ucp_worker);
 
     return 0;
 }
