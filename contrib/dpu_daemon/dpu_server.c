@@ -151,8 +151,9 @@ static void dpu_wait_for_next_data(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     int i;
     if (ctx->idx == 0) {
+        dpu_hc_get_data(ctx->hc, lsync);
         /* main waits for count_in to be updated from host */
-        while(lsync->count_in <= ctx->coll_sync.count_serviced);
+        //while(lsync->count_in <= ctx->coll_sync.count_serviced);
         memcpy(&tmp_sync, lsync, sizeof(dpu_put_sync_t));
         __sync_synchronize();
 
@@ -167,7 +168,7 @@ static void dpu_wait_for_next_data(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     while (!thread_sub_sync[ctx->idx].todo);
 }
 
-static void dpu_mark_work_done(thread_ctx_t *ctx)
+static void dpu_mark_work_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     int i;
     thread_sub_sync[ctx->idx].todo = 0;
@@ -178,11 +179,12 @@ static void dpu_mark_work_done(thread_ctx_t *ctx)
         for (i = 0; i < ctx->nthreads; i++) {
             while(!thread_sub_sync[i].done);
         }
-        dpu_hc_reply(ctx->hc, ctx->coll_sync);
+        //dpu_hc_put_data(ctx->hc, lsync);
+        //dpu_hc_reply(ctx->hc, ctx->coll_sync);
     }
 }
 
-static void dpu_mark_coll_done(thread_ctx_t *ctx)
+static void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     int i;
     thread_main_sync[ctx->idx].todo = 0;
@@ -194,6 +196,8 @@ static void dpu_mark_coll_done(thread_ctx_t *ctx)
             while(!thread_main_sync[i].done);
         }
     }
+    dpu_hc_put_data(ctx->hc, lsync);
+    dpu_hc_reply(ctx->hc, ctx->coll_sync);
 }
 
 void *dpu_worker(void *arg)
@@ -250,13 +254,14 @@ void *dpu_worker(void *arg)
             ctx->buf_idx = (ctx->buf_idx + 1) % ctx->hc->pipeline.num_buffers;
 
             DPU_LOG("Done data, count serviced: %lu\n", ctx->coll_sync.count_serviced);
-            dpu_mark_work_done(ctx);
+            dpu_mark_work_done(ctx, lsync);
 
         } while (ctx->coll_sync.count_serviced < count_total);
 
-        dpu_mark_coll_done(ctx);
-        DPU_LOG("End coll id: %d, type: %d, count total: %lu, count serviced: %lu\n",
-                coll_id, coll_type, count_total, ctx->coll_sync.count_serviced);
+        assert(count_total == ctx->coll_sync.count_serviced);
+        DPU_LOG("End coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
+                coll_id, coll_type, count_total, (size_t)ctx->coll_sync.count_serviced);
+        dpu_mark_coll_done(ctx, lsync);
     }
     return NULL;
 }

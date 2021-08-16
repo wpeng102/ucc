@@ -84,6 +84,8 @@ typedef struct ucc_tl_dpu_rkeys_t {
     char dst_rkey[MAX_RKEY_LEN];
     size_t src_rkey_len;
     size_t dst_rkey_len;
+    void *src_buf;
+    void *dst_buf;
 } ucc_tl_dpu_put_rkeys_t;
 
 typedef struct ucc_tl_dpu_put_sync_t {

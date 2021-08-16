@@ -23,6 +23,9 @@ size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED] = {
     [UCC_DT_UINT128] = 16,
 };
 
+static int _dpu_request_finalize (ucp_worker_h ucp_worker, dpu_req_t *request,
+                                  dpu_req_t *req_ctx);
+                                  
 size_t dpu_ucc_dt_size(ucc_datatype_t dt)
 {
     if (dt < UCC_DT_USERDEFINED) {
@@ -137,6 +140,22 @@ static void send_cb(void *request, ucs_status_t status, void *user_data)
     ctx->complete = 1;
 }
 
+#if 0
+static void send_handler_nbx(void *request, ucs_status_t status,
+                             void *user_data)
+{
+    dpu_req_t *ctx = user_data;
+    ctx->complete = 1;
+}
+
+static void recv_handler_nbx(void *request, ucs_status_t status,
+                             void *user_data)
+{
+    dpu_req_t *ctx = user_data;
+    ctx->complete = 1;
+}
+#endif
+
 static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 {
     printf ("error handling callback was invoked with status %d (%s)\n",
@@ -187,6 +206,13 @@ static int _dpu_ucx_init(dpu_hc_t *hc)
         ret = UCC_ERR_NO_MESSAGE;
         goto err_worker;
     }
+
+    ucp_request_param_t *req_param = &hc->req_param;
+    req_param->op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                              UCP_OP_ATTR_FIELD_DATATYPE;
+    req_param->datatype     = ucp_dt_make_contig(1);
+    req_param->cb.send      = send_cb;
+    req_param->cb.recv      = tag_recv_cb;
 
     return ret;
 err_worker:
@@ -255,6 +281,50 @@ err_map:
 err_calloc:
     free(mem->base);
 out:
+    return ret;
+}
+
+int dpu_hc_get_data(dpu_hc_t *hc, dpu_put_sync_t *sync)
+{
+    int ret;
+    void *request;
+    dpu_req_t req_ctx;
+    ucs_status_t status;
+    ucp_rkey_h src_rkey;
+    host_rkey_t *rkeys = &sync->rkeys;
+    void *src_addr = sync->rkeys.src_buf;
+    size_t dt_size = dpu_ucc_dt_size(sync->dtype);
+    size_t data_size = sync->count_total * dt_size;
+    hc->req_param.user_data = &req_ctx;
+
+    status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->src_rkey, &src_rkey);
+
+    request = ucp_get_nbx(hc->host_ep, hc->mem_segs.put.base, data_size,
+            (uint64_t)src_addr, src_rkey, &hc->req_param);
+
+    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
+    return ret;
+}
+
+int dpu_hc_put_data(dpu_hc_t *hc, dpu_put_sync_t *sync)
+{
+    int ret;
+    void *request;
+    dpu_req_t req_ctx;
+    ucs_status_t status;
+    ucp_rkey_h dst_rkey;
+    host_rkey_t *rkeys = &sync->rkeys;
+    void *dst_addr = sync->rkeys.dst_buf;
+    size_t dt_size = dpu_ucc_dt_size(sync->dtype);
+    size_t data_size = sync->count_total * dt_size;
+    hc->req_param.user_data = &req_ctx;
+
+    status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->dst_rkey, &dst_rkey);
+
+    request = ucp_put_nbx(hc->host_ep, hc->mem_segs.get.base, data_size,
+            (uint64_t)dst_addr, dst_rkey, &hc->req_param);
+
+    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
     return ret;
 }
 
@@ -630,6 +700,7 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t coll_sync)
 //     while( lsync->itt < cntr) {
 //         ucp_worker_progress(hc->ucp_worker);
 //     }
+    fprintf(stderr, "coll_id: %d, serviced: %lu\n", coll_sync.coll_id, coll_sync.count_serviced);
     request = ucp_put_nbx(hc->host_ep, &coll_sync, sizeof(coll_sync),
                           hc->sync_addr, hc->sync_rkey,
                           &req_param);
