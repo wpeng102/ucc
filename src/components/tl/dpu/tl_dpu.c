@@ -39,16 +39,6 @@ static ucs_config_field_t ucc_tl_dpu_context_config_table[] = {
      UCC_CONFIG_TYPE_STRING
     },
 
-    {"PIPELINE_BLOCK_SIZE", "1048576",
-     "Pipeline block size in bytes. (auto round-down to multiple of 8)",
-     ucc_offsetof(ucc_tl_dpu_context_config_t, pipeline.buffer_size),
-     UCC_CONFIG_TYPE_MEMUNITS},
-
-     {"PIPELINE_BUFFERS", "2",
-     "Max number of pipeline buffers. (auto round-down to multiple of 2)",
-     ucc_offsetof(ucc_tl_dpu_context_config_t, pipeline.num_buffers),
-     UCC_CONFIG_TYPE_UINT},
-
     {NULL}};
 
 UCC_CLASS_DEFINE_NEW_FUNC(ucc_tl_dpu_lib_t, ucc_base_lib_t,
