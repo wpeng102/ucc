@@ -163,6 +163,17 @@ static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
             status, ucs_status_string(status));
 }
 
+static void _dpu_pipe_init(dpu_pipeline_t *pipe)
+{
+    memset(pipe, 0, sizeof(dpu_pipeline_t));
+    pipe->req_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                                   UCP_OP_ATTR_FIELD_DATATYPE |
+                                   UCP_OP_ATTR_FIELD_USER_DATA;
+    pipe->req_param.datatype     = ucp_dt_make_contig(1);
+    pipe->req_param.cb.send      = send_cb;
+    pipe->req_param.user_data    = &pipe->req;
+}
+
 static int _dpu_ucx_init(dpu_hc_t *hc)
 {
     ucp_params_t ucp_params;
@@ -207,14 +218,6 @@ static int _dpu_ucx_init(dpu_hc_t *hc)
         ret = UCC_ERR_NO_MESSAGE;
         goto err_worker;
     }
-
-    ucp_request_param_t *req_param = &hc->req_param;
-    req_param->op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                              UCP_OP_ATTR_FIELD_DATATYPE |
-                              UCP_OP_ATTR_FIELD_USER_DATA;
-    req_param->datatype     = ucp_dt_make_contig(1);
-    req_param->cb.send      = send_cb;
-    //req_param->cb.recv      = tag_recv_cb;
 
     return ret;
 err_worker:
@@ -290,58 +293,53 @@ int dpu_hc_get_data(dpu_hc_t *hc, dpu_put_sync_t *sync)
 {
     int ret;
     void *request;
-    dpu_req_t req_ctx = {0};
     ucs_status_t status;
     ucp_rkey_h src_rkey;
     host_rkey_t *rkeys = &sync->rkeys;
     void *src_addr = sync->rkeys.src_buf;
     size_t dt_size = dpu_ucc_dt_size(sync->dtype);
-    size_t data_size = sync->count_total * dt_size;
-    ucp_request_param_t req_param;
-    req_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                             UCP_OP_ATTR_FIELD_DATATYPE |
-                             UCP_OP_ATTR_FIELD_USER_DATA;
-    req_param.datatype     = ucp_dt_make_contig(1);
-    req_param.cb.send      = send_cb;
-    req_param.user_data    = &req_ctx;
+    size_t max_elems = hc->pipeline.buffer_size/dt_size;
+    size_t count = DPU_MIN(max_elems, sync->count_total);
+    size_t data_size = count * dt_size;
+    hc->rx.req.complete = 0;
 
-    fprintf(stderr, "req_ctx: %p data_size %zu src_addr %p\n", &req_ctx, data_size, src_addr);
+    fprintf(stderr, "count %lu data_size %zu src_addr %p\n", count, data_size, src_addr);
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->src_rkey, &src_rkey);
 
-    request = ucp_get_nbx(hc->host_ep, hc->mem_segs.put.base, data_size,
-            (uint64_t)src_addr, src_rkey, &req_param);
+    request = ucp_get_nbx(hc->host_ep, hc->mem_segs.in.base, data_size,
+            (uint64_t)src_addr, src_rkey, &hc->rx.req_param);
 
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
+    ret = _dpu_request_finalize(hc->ucp_worker, request, &hc->rx.req);
     ucp_worker_fence(hc->ucp_worker);
+    
+    //sync->count_in += count;
     return ret;
 }
 
-int dpu_hc_put_data(dpu_hc_t *hc, dpu_put_sync_t *sync)
+int dpu_hc_put_data(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sync)
 {
     int ret;
     void *request;
-    dpu_req_t req_ctx = {0};
     ucs_status_t status;
     ucp_rkey_h dst_rkey;
     host_rkey_t *rkeys = &sync->rkeys;
     void *dst_addr = sync->rkeys.dst_buf;
     size_t dt_size = dpu_ucc_dt_size(sync->dtype);
-    size_t data_size = sync->count_total * dt_size;
-    ucp_request_param_t req_param;
-    req_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                             UCP_OP_ATTR_FIELD_DATATYPE |
-                             UCP_OP_ATTR_FIELD_USER_DATA;
-    req_param.datatype     = ucp_dt_make_contig(1);
-    req_param.cb.send      = send_cb;
-    req_param.user_data    = &req_ctx;
+    size_t max_elems = hc->pipeline.buffer_size/dt_size;
+    size_t count = DPU_MIN(max_elems, sync->count_total);
+    size_t data_size = count * dt_size;
+    hc->tx.req.complete = 0;
 
+    fprintf(stderr, "count %lu data_size %zu dst_addr %p\n", count, data_size, dst_addr);
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->dst_rkey, &dst_rkey);
 
-    request = ucp_put_nbx(hc->host_ep, hc->mem_segs.get.base, data_size,
-            (uint64_t)dst_addr, dst_rkey, &req_param);
+    request = ucp_put_nbx(hc->host_ep, hc->mem_segs.out.base, data_size,
+            (uint64_t)dst_addr, dst_rkey, &hc->rx.req_param);
 
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
+    ret = _dpu_request_finalize(hc->ucp_worker, request, &hc->rx.req);
     ucp_worker_fence(hc->ucp_worker);
+    
+    //coll_sync->count_serviced += count;
     return ret;
 }
 
@@ -358,11 +356,11 @@ static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
     size_t data_buffer_size = hc->pipeline.buffer_size * hc->pipeline.num_buffers;
     fprintf(stderr, "buffer_size: %lu, num_buffers: %lu\n", hc->pipeline.buffer_size, hc->pipeline.num_buffers);
 
-    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.put, data_buffer_size);
+    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.in, data_buffer_size);
     if (ret) {
         goto out;
     }
-    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.get, data_buffer_size);
+    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.out, data_buffer_size);
     if (ret) {
         goto err_put;
     }
@@ -373,9 +371,9 @@ static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
 
     goto out;
 err_get:
-    _dpu_hc_buffer_free(hc, &hc->mem_segs.get);
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.out);
 err_put:
-    _dpu_hc_buffer_free(hc, &hc->mem_segs.put);
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.in);
 out:
     return ret;
 }
@@ -397,6 +395,9 @@ int dpu_hc_init(dpu_hc_t *hc)
     if (ret) {
         goto err_ip;
     }
+
+    _dpu_pipe_init(&hc->rx);
+    _dpu_pipe_init(&hc->tx);
 
     goto out;
 err_ucx:
