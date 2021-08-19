@@ -79,13 +79,13 @@ static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, 
         .coll_type = UCC_COLL_TYPE_ALLREDUCE,
         .mask      = UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS,
         .src.info = {
-            .buffer   = (char *)ctx->hc->mem_segs.put.base + offset,
+            .buffer   = (char *)ctx->hc->mem_segs.in.base + offset,
             .count    = block,
             .datatype = tmp_sync.dtype,
             .mem_type = UCC_MEMORY_TYPE_HOST,
         },
         .dst.info = {
-            .buffer   = (char *)ctx->hc->mem_segs.get.base + offset,
+            .buffer   = (char *)ctx->hc->mem_segs.out.base + offset,
             .count    = block,
             .datatype = tmp_sync.dtype,
             .mem_type = UCC_MEMORY_TYPE_HOST,
@@ -110,13 +110,13 @@ static void dpu_coll_init_alltoall(thread_ctx_t *ctx, ucc_coll_req_h *request, s
     ucc_coll_args_t coll = {
         .coll_type = UCC_COLL_TYPE_ALLTOALL,
         .src.info = {
-            .buffer   = ctx->hc->mem_segs.put.base,
+            .buffer   = ctx->hc->mem_segs.in.base,
             .count    = tmp_sync.count_total,
             .datatype = tmp_sync.dtype,
             .mem_type = UCC_MEMORY_TYPE_HOST,
         },
         .dst.info = {
-            .buffer   = ctx->hc->mem_segs.get.base,
+            .buffer   = ctx->hc->mem_segs.out.base,
             .count    = tmp_sync.count_total,
             .datatype = tmp_sync.dtype,
             .mem_type = UCC_MEMORY_TYPE_HOST,
@@ -179,7 +179,7 @@ static void dpu_mark_work_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
         for (i = 0; i < ctx->nthreads; i++) {
             while(!thread_sub_sync[i].done);
         }
-        //dpu_hc_put_data(ctx->hc, lsync);
+        dpu_hc_put_data(ctx->hc, lsync, &ctx->coll_sync);
         //dpu_hc_reply(ctx->hc, &ctx->coll_sync);
     }
 }
@@ -195,7 +195,7 @@ static void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
         for (i = 0; i < ctx->nthreads; i++) {
             while(!thread_main_sync[i].done);
         }
-        dpu_hc_put_data(ctx->hc, lsync);
+        //dpu_hc_put_data(ctx->hc, lsync);
         dpu_hc_reply(ctx->hc, &ctx->coll_sync);
     }
 }
@@ -230,6 +230,7 @@ void *dpu_worker(void *arg)
         do {
             dpu_wait_for_next_data(ctx, lsync);
             DPU_LOG("Got data, count in: %lu\n", lsync->count_in);
+            assert(lsync->count_in <= count_total);
 
             if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
                 dpu_coll_init_allreduce(ctx, &request, &count_serviced);
