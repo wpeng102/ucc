@@ -214,7 +214,7 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     ucp_worker_fence(ctx->ucp_worker);
     
     /* Initialize put_sync_data for xfer */
-    task->put_sync.count_out += count;
+    //task->put_sync.count_out += count;
     memcpy(&put_req->sync_data, &task->put_sync, sizeof(task->put_sync));
 
     put_req->sync_req =

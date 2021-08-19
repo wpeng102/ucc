@@ -33,6 +33,9 @@
 #define EXCHANGE_RKEY_TAG 2ull
 #define EXCHANGE_ADDR_TAG 3ull
 
+#define DPU_MIN(a,b) (((a)<(b))?(a):(b))
+#define DPU_MAX(a,b) (((a)>(b))?(a):(b))
+
 extern size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED];
 
 typedef struct dpu_req_s {
@@ -78,14 +81,22 @@ typedef struct dpu_mem_s {
 
 typedef struct dpu_mem_segs_s {
     dpu_mem_t sync;
-    dpu_mem_t put;
-    dpu_mem_t get;
+    dpu_mem_t in;
+    dpu_mem_t out;
 } dpu_mem_segs_t;
 
 typedef struct dpu_pipeline_info_s {
     size_t buffer_size;
     size_t num_buffers;
 } dpu_pipeline_info_t;
+
+typedef struct dpu_pipeline_t {
+    ucp_request_param_t      req_param;
+    dpu_req_t                req;
+    uint32_t                 count;
+    uint32_t                 slot_idx;
+    uint32_t                 in_flight;
+} dpu_pipeline_t;
 
 typedef struct dpu_hc_s {
     /* TCP/IP stuff */
@@ -108,7 +119,9 @@ typedef struct dpu_hc_s {
     ucp_rkey_h sync_rkey;
 
     /* pipeline buffer */
-    dpu_pipeline_info_t pipeline;
+    dpu_pipeline_info_t  pipeline;
+    dpu_pipeline_t       rx;
+    dpu_pipeline_t       tx;
 } dpu_hc_t;
 
 int dpu_hc_init(dpu_hc_t *dpu_hc);
@@ -117,7 +130,7 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync);
 int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id);
 
 int dpu_hc_get_data(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync);
-int dpu_hc_put_data(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync);
+int dpu_hc_put_data(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sync);
 
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);
 
