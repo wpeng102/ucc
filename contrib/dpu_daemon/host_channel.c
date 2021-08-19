@@ -353,6 +353,8 @@ static int _dpu_hc_buffer_free(dpu_hc_t *hc, dpu_mem_t *mem)
 static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
 {
     int ret;
+    hc->pipeline.buffer_size = 1l * 1024 * 1024;
+    hc->pipeline.num_buffers = 2;
     size_t data_buffer_size = hc->pipeline.buffer_size * hc->pipeline.num_buffers;
     fprintf(stderr, "buffer_size: %lu, num_buffers: %lu\n", hc->pipeline.buffer_size, hc->pipeline.num_buffers);
 
@@ -664,12 +666,12 @@ int dpu_hc_accept(dpu_hc_t *hc)
         goto err;
     }
 
-    ret = recv(hc->connfd, &hc->pipeline, sizeof(hc->pipeline), MSG_WAITALL);
+    /*ret = recv(hc->connfd, &hc->pipeline, sizeof(hc->pipeline), MSG_WAITALL);
     if (-1 == ret) {
         fprintf(stderr, "recv pipeline info failed!\n");
         ret = UCC_ERR_NO_MESSAGE;
         goto err;
-    }
+    }*/
 
     ret = _dpu_hc_init_pipeline(hc);
     if (ret) {
