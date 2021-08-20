@@ -151,7 +151,7 @@ static void dpu_wait_for_next_data(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     int i;
     if (ctx->idx == 0) {
-        dpu_hc_get_data(ctx->hc, lsync);
+        dpu_hc_issue_get(ctx->hc, lsync);
         /* main waits for count_in to be updated from host */
         //while(lsync->count_in <= ctx->coll_sync.count_serviced);
         memcpy(&tmp_sync, lsync, sizeof(dpu_put_sync_t));
@@ -179,7 +179,7 @@ static void dpu_mark_work_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
         for (i = 0; i < ctx->nthreads; i++) {
             while(!thread_sub_sync[i].done);
         }
-        dpu_hc_put_data(ctx->hc, lsync, &ctx->coll_sync);
+        dpu_hc_issue_put(ctx->hc, lsync, &ctx->coll_sync);
         //dpu_hc_reply(ctx->hc, &ctx->coll_sync);
     }
 }
@@ -228,7 +228,7 @@ void *dpu_worker(void *arg)
 
         /* Process all data */
         do {
-            dpu_wait_for_next_data(ctx, lsync);
+            dpu_wait_for_next_data(ctx, lsync); //issue nb get
             DPU_LOG("Got data, count in: %lu\n", lsync->count_in);
             assert(lsync->count_in <= count_total);
 
@@ -252,7 +252,7 @@ void *dpu_worker(void *arg)
             }
             
             ctx->coll_sync.count_serviced += count_serviced;
-            ctx->buf_idx = (ctx->buf_idx + 1) % ctx->hc->pipeline.num_buffers;
+            ctx->buf_idx = 0; //(ctx->buf_idx + 1) % 2;
 
             DPU_LOG("Done data, count serviced: %lu\n", ctx->coll_sync.count_serviced);
             dpu_mark_work_done(ctx, lsync);
