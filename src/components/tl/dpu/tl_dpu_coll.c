@@ -242,6 +242,7 @@ ucc_status_t ucc_tl_dpu_allreduce_start(ucc_coll_task_t *coll_task)
     }
 
     req_param = &task->task_reqs.req_param;
+    memset(req_param, 0, sizeof(ucp_request_param_t));
     req_param->op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                               UCP_OP_ATTR_FIELD_DATATYPE;
     req_param->datatype     = ucp_dt_make_contig(1);
@@ -304,7 +305,6 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     task->get_sync.coll_id           = 0;
     task->get_sync.count_serviced    = 0;
 
-    memset(&task->task_reqs.req_param, 0, sizeof(ucp_request_param_t));
     task->super.post     = ucc_tl_dpu_allreduce_start;
     task->super.progress = ucc_tl_dpu_allreduce_progress;
 

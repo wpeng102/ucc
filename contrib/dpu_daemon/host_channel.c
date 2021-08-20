@@ -23,8 +23,7 @@ size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED] = {
     [UCC_DT_UINT128] = 16,
 };
 
-static int _dpu_request_finalize (ucp_worker_h ucp_worker, dpu_req_t *request,
-                                  dpu_req_t *req_ctx);
+static ucs_status_t _dpu_request_wait (ucp_worker_h ucp_worker, dpu_req_t *request);
                                   
 size_t dpu_ucc_dt_size(ucc_datatype_t dt)
 {
@@ -127,51 +126,60 @@ static int _dpu_listen_cleanup(dpu_hc_t *hc)
     free(hc->hname);
 }
 
-static void tag_recv_cb (void *request, ucs_status_t status,
+static void _dpu_recv_cb (void *request, ucs_status_t status,
                          const ucp_tag_recv_info_t *info, void *user_data)
 {
-    dpu_req_t *ctx = user_data;
-
-    ctx->complete = 1;
+    dpu_req_t *req = (dpu_req_t *)request;
+    req->complete = 1;
 }
 
-static void send_cb(void *request, ucs_status_t status, void *user_data)
+static void _dpu_send_cb(void *request, ucs_status_t status, void *user_data)
 {
-    dpu_req_t *ctx = user_data;
-    ctx->complete = 1;
+    dpu_req_t *req = (dpu_req_t *)request;
+    req->complete = 1;
 }
 
-#if 0
-static void send_handler_nbx(void *request, ucs_status_t status,
-                             void *user_data)
+void _dpu_req_init(void* request)
 {
-    dpu_req_t *ctx = user_data;
-    ctx->complete = 1;
+    dpu_req_t *req = (dpu_req_t *)request;
+    req->complete = 0;
 }
 
-static void recv_handler_nbx(void *request, ucs_status_t status,
-                             void *user_data)
+void _dpu_req_cleanup(void* request)
 {
-    dpu_req_t *ctx = user_data;
-    ctx->complete = 1;
+    return;
 }
-#endif
+
+ucc_status_t _dpu_req_test(dpu_req_t **req, ucp_worker_h worker)
+{
+    if (*req == NULL) {
+        return UCC_OK;
+    }
+
+    if ((*req)->complete == 1) {
+        (*req)->complete = 0;
+        ucp_request_free(*req);
+        (*req) = NULL;
+        return UCC_OK;
+    }
+    ucp_worker_progress(worker);
+    return UCC_INPROGRESS;
+}
+
+inline
+ucc_status_t _dpu_req_check(dpu_request_t *req)
+{
+    if (UCS_PTR_IS_ERR(req)) {
+        fprintf(stderr, "failed to send/recv msg\n");
+        return UCC_ERR_NO_MESSAGE;
+    }
+    return UCC_OK;
+}
 
 static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 {
     printf ("error handling callback was invoked with status %d (%s)\n",
             status, ucs_status_string(status));
-}
-
-static void _dpu_pipe_init(dpu_pipeline_t *pipe)
-{
-    memset(pipe, 0, sizeof(dpu_pipeline_t));
-    pipe->req_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                                   UCP_OP_ATTR_FIELD_DATATYPE |
-                                   UCP_OP_ATTR_FIELD_USER_DATA;
-    pipe->req_param.datatype     = ucp_dt_make_contig(1);
-    pipe->req_param.cb.send      = send_cb;
-    pipe->req_param.user_data    = &pipe->req;
 }
 
 static int _dpu_ucx_init(dpu_hc_t *hc)
@@ -181,16 +189,17 @@ static int _dpu_ucx_init(dpu_hc_t *hc)
     ucp_worker_params_t worker_params;
     int ret = UCC_OK;
 
-//     printf ("%s\n", __FUNCTION__);
-
     memset(&ucp_params, 0, sizeof(ucp_params));
-    ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES;
+    ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES     |
+                            UCP_PARAM_FIELD_REQUEST_SIZE |
+                            UCP_PARAM_FIELD_REQUEST_INIT |
+                            UCP_PARAM_FIELD_REQUEST_CLEANUP;
     ucp_params.features = UCP_FEATURE_TAG |
                           UCP_FEATURE_RMA;
-/*
-                          UCP_FEATURE_AMO64 |
-                          UCP_FEATURE_AMO32;
-*/
+    ucp_params.request_size    = sizeof(dpu_req_t);
+    ucp_params.request_init    = _dpu_req_init;
+    ucp_params.request_cleanup = _dpu_req_cleanup;
+
     status = ucp_init(&ucp_params, NULL, &hc->ucp_ctx);
     if (status != UCS_OK) {
         fprintf(stderr, "failed to ucp_init(%s)\n", ucs_status_string(status));
@@ -289,10 +298,9 @@ out:
     return ret;
 }
 
-int dpu_hc_get_data(dpu_hc_t *hc, dpu_put_sync_t *sync)
+int dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync)
 {
     int ret;
-    void *request;
     ucs_status_t status;
     ucp_rkey_h src_rkey;
     host_rkey_t *rkeys = &sync->rkeys;
@@ -301,25 +309,26 @@ int dpu_hc_get_data(dpu_hc_t *hc, dpu_put_sync_t *sync)
     size_t max_elems = hc->pipeline.buffer_size/dt_size;
     size_t count = DPU_MIN(max_elems, sync->count_total);
     size_t data_size = count * dt_size;
-    hc->rx.req.complete = 0;
+    size_t get_idx = hc->pipeline.get_idx;
+    dpu_request_t *req = &hc->pipeline.get_reqs[get_idx];
 
     fprintf(stderr, "count %lu data_size %zu src_addr %p\n", count, data_size, src_addr);
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->src_rkey, &src_rkey);
 
-    request = ucp_get_nbx(hc->host_ep, hc->mem_segs.in.base, data_size,
-            (uint64_t)src_addr, src_rkey, &hc->rx.req_param);
-
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &hc->rx.req);
+    req->data_req = ucp_get_nbx(hc->host_ep, hc->pipeline.get_bufs[get_idx], data_size,
+            (uint64_t)src_addr, src_rkey, &hc->req_param);
+    
+    ret = _dpu_request_wait(hc->ucp_worker, req->data_req);
     ucp_worker_fence(hc->ucp_worker);
     
-    //sync->count_in += count;
+    sync->count_in += count;
+    hc->pipeline.count_get += count;
     return ret;
 }
 
-int dpu_hc_put_data(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sync)
+int dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sync)
 {
     int ret;
-    void *request;
     ucs_status_t status;
     ucp_rkey_h dst_rkey;
     host_rkey_t *rkeys = &sync->rkeys;
@@ -328,18 +337,19 @@ int dpu_hc_put_data(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_syn
     size_t max_elems = hc->pipeline.buffer_size/dt_size;
     size_t count = DPU_MIN(max_elems, sync->count_total);
     size_t data_size = count * dt_size;
-    hc->tx.req.complete = 0;
+    size_t put_idx = hc->pipeline.put_idx;
+    dpu_request_t *req = &hc->pipeline.put_reqs[put_idx];
 
     fprintf(stderr, "count %lu data_size %zu dst_addr %p\n", count, data_size, dst_addr);
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->dst_rkey, &dst_rkey);
 
-    request = ucp_put_nbx(hc->host_ep, hc->mem_segs.out.base, data_size,
-            (uint64_t)dst_addr, dst_rkey, &hc->rx.req_param);
+    req->data_req = ucp_put_nbx(hc->host_ep, hc->pipeline.get_bufs[put_idx], data_size,
+            (uint64_t)dst_addr, dst_rkey, &hc->req_param);
 
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &hc->rx.req);
+    ret = _dpu_request_wait(hc->ucp_worker, req->data_req);
     ucp_worker_fence(hc->ucp_worker);
     
-    //coll_sync->count_serviced += count;
+    hc->pipeline.count_put += count;
     return ret;
 }
 
@@ -353,16 +363,16 @@ static int _dpu_hc_buffer_free(dpu_hc_t *hc, dpu_mem_t *mem)
 static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
 {
     int ret;
-    hc->pipeline.buffer_size = 1l * 1024 * 1024;
-    hc->pipeline.num_buffers = 2;
-    size_t data_buffer_size = hc->pipeline.buffer_size * hc->pipeline.num_buffers;
-    fprintf(stderr, "buffer_size: %lu, num_buffers: %lu\n", hc->pipeline.buffer_size, hc->pipeline.num_buffers);
 
-    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.in, data_buffer_size);
+    memset(&hc->pipeline, 0, sizeof(hc->pipeline));
+    hc->pipeline.buffer_size            = 1l * 1024 * 1024;
+    fprintf(stderr, "buffer_size: %lu, num_buffers: %lu\n", hc->pipeline.buffer_size, 2);
+
+    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.in, hc->pipeline.buffer_size * 2);
     if (ret) {
         goto out;
     }
-    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.out, data_buffer_size);
+    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.out, hc->pipeline.buffer_size * 2);
     if (ret) {
         goto err_put;
     }
@@ -370,6 +380,12 @@ static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
     if (ret) {
         goto err_get;
     }
+
+    hc->pipeline.get_bufs[0] = hc->mem_segs.in.base;
+    hc->pipeline.get_bufs[1] = hc->mem_segs.in.base + hc->pipeline.buffer_size;
+
+    hc->pipeline.put_bufs[0] = hc->mem_segs.out.base;
+    hc->pipeline.put_bufs[1] = hc->mem_segs.out.base + hc->pipeline.buffer_size;
 
     goto out;
 err_get:
@@ -397,9 +413,6 @@ int dpu_hc_init(dpu_hc_t *hc)
     if (ret) {
         goto err_ip;
     }
-
-    _dpu_pipe_init(&hc->rx);
-    _dpu_pipe_init(&hc->tx);
 
     goto out;
 err_ucx:
@@ -430,6 +443,11 @@ static ucs_status_t _dpu_ep_create (dpu_hc_t *hc, void *rem_worker_addr)
         return UCC_ERR_NO_MESSAGE;
     }
 
+    memset(&hc->req_param, 0, sizeof(hc->req_param));
+    hc->req_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK;
+    hc->req_param.cb.send      = _dpu_send_cb;
+    hc->req_param.cb.recv      = _dpu_recv_cb;
+
     return UCC_OK;
 }
 
@@ -458,109 +476,71 @@ static int _dpu_ep_close(dpu_hc_t *hc)
 }
 
 
-static ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, void *request,
-                                      dpu_req_t *req_ctx)
+static ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, dpu_req_t *request)
 {
-//     printf ("%s\n", __FUNCTION__);
     ucs_status_t status;
 
     /* immediate completion */
-    if (request == NULL) {
-        fprintf(stderr, "Immediate completion\n");
+    if (request == NULL || request->complete == 1) {
         return UCS_OK;
     }
-
-    if (UCS_PTR_IS_ERR(request)) {
+    else if (UCS_PTR_IS_ERR(request)) {
+        fprintf (stderr, "unable to complete UCX request (%s)\n", ucs_status_string(status));
         return UCS_PTR_STATUS(request);
     }
-
-    while (req_ctx->complete == 0) {
-//         printf ("ucp_worker_progress()\n");
-//         sleep(1);
-        ucp_worker_progress(ucp_worker);
+    else {
+        do {
+            ucp_worker_progress(ucp_worker);
+            status = ucp_request_check_status(request);
+        } while (status == UCS_INPROGRESS);
+        ucp_request_free(request);
     }
-    status = ucp_request_check_status(request);
-
-    ucp_request_free(request);
 
     return status;
 }
 
-static int _dpu_request_finalize (ucp_worker_h ucp_worker, dpu_req_t *request,
-                                  dpu_req_t *req_ctx)
-{
-//     printf ("%s\n", __FUNCTION__);
-    ucs_status_t status;
-    int ret = SUCCESS;
-
-    status = _dpu_request_wait(ucp_worker, request, req_ctx);
-    if (status != UCS_OK) {
-        fprintf (stderr, "unable to recv UCX message (%s)\n", ucs_status_string(status));
-        return -1;
-    }
-
-    /* reset req_ctx */
-    req_ctx->complete = 0;
-
-    return ret;
-}
-
 static int _dpu_rmem_setup(dpu_hc_t *hc)
 {
-    int i, ret = SUCCESS;
-    ucp_request_param_t param;
-    void *request;
-    dpu_req_t req_ctx;
+    int i;
+    ucs_status_t status;
+    ucp_request_param_t *param = &hc->req_param;
+    dpu_req_t *request;
     size_t rkeys_total_len = 0, rkey_lens[3];
     uint64_t seg_base_addrs[3];
     char *rkeys = NULL, *rkey_p;
 
-    req_ctx.complete = 0;
-
-    /* XXX */
-//     ucp_worker_print_info(hc->ucp_worker, stderr);
-
-    /* recv rkey len & address */    /* recv rkey len & address */
-    param.op_attr_mask  = UCP_OP_ATTR_FIELD_CALLBACK |
-                          UCP_OP_ATTR_FIELD_USER_DATA;
-    param.user_data     = &req_ctx;
-    param.cb.recv       = tag_recv_cb;
-    param.op_attr_mask  = UCP_OP_ATTR_FIELD_CALLBACK |
-                          UCP_OP_ATTR_FIELD_USER_DATA;
-    param.user_data     = &req_ctx;
-    param.cb.recv       = tag_recv_cb;
     request = ucp_tag_recv_nbx(hc->ucp_worker, &hc->sync_addr, sizeof(uint64_t),
-                                      EXCHANGE_ADDR_TAG, (uint64_t)-1, &param);
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
-    if (ret) {
+                                      EXCHANGE_ADDR_TAG, (uint64_t)-1, param);
+    status = _dpu_request_wait(hc->ucp_worker, request);
+    if (status) {
+        fprintf(stderr, "failed to recv sync addr (%s)\n", ucs_status_string(status));
         goto err;
     }
 
     request = ucp_tag_recv_nbx(hc->ucp_worker, &rkey_lens[0], sizeof(size_t),
-                                      EXCHANGE_LENGTH_TAG, (uint64_t)-1, &param);
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
-    if (ret) {
+                                      EXCHANGE_LENGTH_TAG, (uint64_t)-1, param);
+    status = _dpu_request_wait(hc->ucp_worker, request);
+    if (status) {
+        fprintf(stderr, "failed to recv rkey lens (%s)\n", ucs_status_string(status));
         goto err;
     }
 
     rkeys = calloc(1, rkey_lens[0]);
     request = ucp_tag_recv_nbx(hc->ucp_worker, rkeys, rkey_lens[0], EXCHANGE_RKEY_TAG,
-                               (uint64_t)-1, &param);
+                               (uint64_t)-1, param);
 
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
-    if (ret) {
+    status = _dpu_request_wait(hc->ucp_worker, request);
+    if (status) {
+        fprintf(stderr, "failed to recv hosyt rkeys (%s)\n", ucs_status_string(status));
         goto err;
     }
 
-    ucs_status_t status = ucp_ep_rkey_unpack(hc->host_ep, rkeys, &hc->sync_rkey);
-    if (UCS_OK != status) {
+    status = ucp_ep_rkey_unpack(hc->host_ep, rkeys, &hc->sync_rkey);
+    if (status) {
         fprintf(stderr, "failed to ucp_ep_rkey_unpack (%s)\n", ucs_status_string(status));
     }
     free(rkeys);
 
-    /* send rkey lens & addresses */
-    param.cb.send = send_cb;
-   
     /* compute total len */
     for (i = 0; i < 3; i++) {
         rkey_lens[i] = hc->mem_segs_array[i].rkey.rkey_addr_len;
@@ -574,16 +554,18 @@ static int _dpu_rmem_setup(dpu_hc_t *hc)
 
     /* send rkey_lens */
     request = ucp_tag_send_nbx(hc->host_ep, rkey_lens, 3*sizeof(size_t),
-                                     EXCHANGE_LENGTH_TAG, &param);
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
-    if (ret) {
+                                     EXCHANGE_LENGTH_TAG, param);
+    status = _dpu_request_wait(hc->ucp_worker, request);
+    if (status) {
+        fprintf(stderr, "failed to send rkey lens (%s)\n", ucs_status_string(status));
         goto err;
     }
 
     request = ucp_tag_send_nbx(hc->host_ep, seg_base_addrs, 3*sizeof(uint64_t),
-                                     EXCHANGE_ADDR_TAG, &param);
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
-    if (ret) {
+                                     EXCHANGE_ADDR_TAG, param);
+    status = _dpu_request_wait(hc->ucp_worker, request);
+    if (status) {
+        fprintf(stderr, "failed to segment base addrs (%s)\n", ucs_status_string(status));
         goto err;
     }
 
@@ -593,9 +575,10 @@ static int _dpu_rmem_setup(dpu_hc_t *hc)
         rkey_p+=rkey_lens[i];
     }
 
-    request = ucp_tag_send_nbx(hc->host_ep, rkeys, rkeys_total_len, EXCHANGE_RKEY_TAG, &param);
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
-    if (ret) {
+    request = ucp_tag_send_nbx(hc->host_ep, rkeys, rkeys_total_len, EXCHANGE_RKEY_TAG, param);
+    status = _dpu_request_wait(hc->ucp_worker, request);
+    if (status) {
+        fprintf(stderr, "failed to send dpu rkeys (%s)\n", ucs_status_string(status));
         goto err;
     }
 
@@ -603,7 +586,7 @@ static int _dpu_rmem_setup(dpu_hc_t *hc)
 
 err:
     printf ("%s ERROR!\n", __FUNCTION__);
-    return ret;
+    return ERROR;
 }
 
 
@@ -675,6 +658,7 @@ int dpu_hc_accept(dpu_hc_t *hc)
 
     ret = _dpu_hc_init_pipeline(hc);
     if (ret) {
+        fprintf(stderr, "init pipeline failed!\n");
         goto err;
     }
 
@@ -706,26 +690,14 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
 {
     // dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
     ucp_request_param_t req_param;
-    void *request;
-    dpu_req_t req_ctx = { 0 };
+    dpu_req_t *request;
     int ret;
 
-    req_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                             UCP_OP_ATTR_FIELD_DATATYPE |
-                             UCP_OP_ATTR_FIELD_USER_DATA;
-    req_param.datatype     = ucp_dt_make_contig(1);
-    req_param.cb.send      = send_cb;
-    req_param.user_data    = &req_ctx;
-
-//     static unsigned int cntr = 1;
-//     while( lsync->itt < cntr) {
-//         ucp_worker_progress(hc->ucp_worker);
-//     }
     fprintf(stderr, "addr: %p, coll_id: %d, serviced: %lu\n", hc->sync_addr, coll_sync->coll_id, coll_sync->count_serviced);
     request = ucp_put_nbx(hc->host_ep, coll_sync, sizeof(dpu_get_sync_t),
                           hc->sync_addr, hc->sync_rkey,
-                          &req_param);
-    ret = _dpu_request_finalize(hc->ucp_worker, request, &req_ctx);
+                          &hc->req_param);
+    ret = _dpu_request_wait(hc->ucp_worker, request);
     if (ret) {
         return -1;
     }
