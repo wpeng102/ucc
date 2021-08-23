@@ -23,7 +23,7 @@ size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED] = {
     [UCC_DT_UINT128] = 16,
 };
 
-static ucs_status_t _dpu_request_wait (ucp_worker_h ucp_worker, dpu_req_t *request);
+static ucs_status_t _dpu_request_wait (ucp_worker_h ucp_worker, dpu_request_t *request);
                                   
 size_t dpu_ucc_dt_size(ucc_datatype_t dt)
 {
@@ -129,19 +129,19 @@ static int _dpu_listen_cleanup(dpu_hc_t *hc)
 static void _dpu_recv_cb (void *request, ucs_status_t status,
                          const ucp_tag_recv_info_t *info, void *user_data)
 {
-    dpu_req_t *req = (dpu_req_t *)request;
+    dpu_request_t *req = (dpu_request_t *)request;
     req->complete = 1;
 }
 
 static void _dpu_send_cb(void *request, ucs_status_t status, void *user_data)
 {
-    dpu_req_t *req = (dpu_req_t *)request;
+    dpu_request_t *req = (dpu_request_t *)request;
     req->complete = 1;
 }
 
 void _dpu_req_init(void* request)
 {
-    dpu_req_t *req = (dpu_req_t *)request;
+    dpu_request_t *req = (dpu_request_t *)request;
     req->complete = 0;
 }
 
@@ -150,7 +150,7 @@ void _dpu_req_cleanup(void* request)
     return;
 }
 
-ucc_status_t _dpu_req_test(dpu_req_t **req, ucp_worker_h worker)
+ucc_status_t _dpu_req_test(dpu_request_t **req, ucp_worker_h worker)
 {
     if (*req == NULL) {
         return UCC_OK;
@@ -196,7 +196,7 @@ static int _dpu_ucx_init(dpu_hc_t *hc)
                             UCP_PARAM_FIELD_REQUEST_CLEANUP;
     ucp_params.features = UCP_FEATURE_TAG |
                           UCP_FEATURE_RMA;
-    ucp_params.request_size    = sizeof(dpu_req_t);
+    ucp_params.request_size    = sizeof(dpu_request_t);
     ucp_params.request_init    = _dpu_req_init;
     ucp_params.request_cleanup = _dpu_req_cleanup;
 
@@ -315,10 +315,10 @@ int dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync)
     DPU_LOG("count %lu data_size %zu src_addr %p\n", count, data_size, src_addr);
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->src_rkey, &src_rkey);
 
-    req->data_req = ucp_get_nbx(hc->host_ep, hc->pipeline.get_bufs[get_idx], data_size,
+    req = ucp_get_nbx(hc->host_ep, hc->pipeline.get_bufs[get_idx], data_size,
             (uint64_t)src_addr, src_rkey, &hc->req_param);
     
-    ret = _dpu_request_wait(hc->ucp_worker, req->data_req);
+    ret = _dpu_request_wait(hc->ucp_worker, req);
     ucp_worker_fence(hc->ucp_worker);
     
     sync->count_in += count;
@@ -343,10 +343,10 @@ int dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sy
     DPU_LOG("count %lu data_size %zu dst_addr %p\n", count, data_size, dst_addr);
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->dst_rkey, &dst_rkey);
 
-    req->data_req = ucp_put_nbx(hc->host_ep, hc->pipeline.get_bufs[put_idx], data_size,
+    req = ucp_put_nbx(hc->host_ep, hc->pipeline.get_bufs[put_idx], data_size,
             (uint64_t)dst_addr, dst_rkey, &hc->req_param);
 
-    ret = _dpu_request_wait(hc->ucp_worker, req->data_req);
+    ret = _dpu_request_wait(hc->ucp_worker, req);
     ucp_worker_fence(hc->ucp_worker);
     
     coll_sync->count_serviced += count;
@@ -477,7 +477,7 @@ static int _dpu_ep_close(dpu_hc_t *hc)
 }
 
 
-static ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, dpu_req_t *request)
+static ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, dpu_request_t *request)
 {
     ucs_status_t status;
 
@@ -505,7 +505,7 @@ static int _dpu_rmem_setup(dpu_hc_t *hc)
     int i;
     ucs_status_t status;
     ucp_request_param_t *param = &hc->req_param;
-    dpu_req_t *request;
+    dpu_request_t *request;
     size_t rkeys_total_len = 0, rkey_lens[3];
     uint64_t seg_base_addrs[3];
     char *rkeys = NULL, *rkey_p;
@@ -689,9 +689,8 @@ int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id)
 
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
 {
-    // dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
-    ucp_request_param_t req_param;
-    dpu_req_t *request;
+    dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
+    dpu_request_t *request;
     int ret;
 
     fprintf(stderr, "addr: %p, coll_id: %d, serviced: %lu\n", hc->sync_addr, coll_sync->coll_id, coll_sync->count_serviced);
@@ -703,6 +702,7 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
         return -1;
     }
     ucp_worker_fence(hc->ucp_worker);
+    memset(lsync, 0, sizeof(dpu_put_sync_t));
 
     return 0;
 }
