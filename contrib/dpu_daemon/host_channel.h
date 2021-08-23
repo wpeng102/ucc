@@ -60,12 +60,12 @@ typedef struct dpu_request_t {
 } dpu_request_t;
 
 typedef struct host_rkey_t {
-    char src_rkey[MAX_RKEY_LEN];
-    char dst_rkey[MAX_RKEY_LEN];
-    size_t src_rkey_len;
-    size_t dst_rkey_len;
-    void *src_buf;
-    void *dst_buf;
+    char    src_rkey_buf[MAX_RKEY_LEN];
+    char    dst_rkey_buf[MAX_RKEY_LEN];
+    size_t  src_rkey_len;
+    size_t  dst_rkey_len;
+    void   *src_buf;
+    void   *dst_buf;
 } host_rkey_t;
 
 /* sync struct type
@@ -106,15 +106,17 @@ typedef struct dpu_pipeline_t {
     size_t              buffer_size;
     void               *get_bufs[2];
     void               *put_bufs[2];
-    dpu_request_t       get_reqs[2];
-    dpu_request_t       put_reqs[2];
-    dpu_request_t       syn_reqs[2];
+    dpu_request_t      *get_reqs[2];
+    dpu_request_t      *put_reqs[2];
+    dpu_request_t      *sync_req;
     size_t              get_idx;
     size_t              red_idx;
     size_t              put_idx;
-    volatile size_t     count_get;
-    volatile size_t     count_red;
-    volatile size_t     count_put;
+    size_t              count_get;
+    size_t              count_red;
+    size_t              count_put;
+    int                 gets_inflight;
+    int                 puts_inflight;
 } dpu_pipeline_t;
 
 typedef struct dpu_hc_t {
@@ -135,6 +137,8 @@ typedef struct dpu_hc_t {
     /* Remote UCX stuff */
     ucp_ep_h host_ep;
     uint64_t sync_addr;
+    ucp_rkey_h src_rkey;
+    ucp_rkey_h dst_rkey;
     ucp_rkey_h sync_rkey;
 
     /* pipeline buffer */
