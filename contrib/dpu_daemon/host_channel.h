@@ -55,11 +55,11 @@ do {                                                                \
 
 extern size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED];
 
-typedef struct dpu_req_s {
+typedef struct dpu_request_t {
     int complete;
-} dpu_req_t;
+} dpu_request_t;
 
-typedef struct host_rkey_s {
+typedef struct host_rkey_t {
     char src_rkey[MAX_RKEY_LEN];
     char dst_rkey[MAX_RKEY_LEN];
     size_t src_rkey_len;
@@ -70,7 +70,7 @@ typedef struct host_rkey_s {
 
 /* sync struct type
  * use it for counter, dtype, ar op, length */
-typedef struct dpu_put_sync_s {
+typedef struct dpu_put_sync_t {
     host_rkey_t         rkeys;
     ucc_datatype_t      dtype;
     ucc_reduction_op_t  op;
@@ -80,39 +80,35 @@ typedef struct dpu_put_sync_s {
     volatile uint32_t   coll_id;
 } dpu_put_sync_t;
 
-typedef struct dpu_get_sync_s {
+typedef struct dpu_get_sync_t {
     uint32_t  count_serviced;
     uint32_t  coll_id;
 } dpu_get_sync_t;
 
-typedef struct dpu_rkey_s {
+typedef struct dpu_rkey_t {
     void    *rkey_addr;
     size_t  rkey_addr_len;
 } dpu_rkey_t;
 
-typedef struct dpu_mem_s {
+typedef struct dpu_mem_t {
     void *base;
     ucp_mem_h memh;
     dpu_rkey_t rkey;
 } dpu_mem_t;
 
-typedef struct dpu_mem_segs_s {
+typedef struct dpu_mem_segs_t {
     dpu_mem_t sync;
     dpu_mem_t in;
     dpu_mem_t out;
 } dpu_mem_segs_t;
 
-typedef struct dpu_request_t{
-    dpu_req_t *data_req;
-    dpu_req_t *sync_req;
-} dpu_request_t;
-
-typedef struct dpu_pipeline_s {
+typedef struct dpu_pipeline_t {
     size_t              buffer_size;
     void               *get_bufs[2];
     void               *put_bufs[2];
     dpu_request_t       get_reqs[2];
     dpu_request_t       put_reqs[2];
+    dpu_request_t       syn_reqs[2];
     size_t              get_idx;
     size_t              red_idx;
     size_t              put_idx;
@@ -121,7 +117,7 @@ typedef struct dpu_pipeline_s {
     volatile size_t     count_put;
 } dpu_pipeline_t;
 
-typedef struct dpu_hc_s {
+typedef struct dpu_hc_t {
     /* TCP/IP stuff */
     char *hname;
     char *ip;
