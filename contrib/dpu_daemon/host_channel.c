@@ -298,62 +298,6 @@ out:
     return ret;
 }
 
-int dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync)
-{
-    int ret;
-    ucs_status_t status;
-    ucp_rkey_h src_rkey;
-    host_rkey_t *rkeys = &sync->rkeys;
-    void *src_addr = sync->rkeys.src_buf;
-    size_t dt_size = dpu_ucc_dt_size(sync->dtype);
-    size_t max_elems = hc->pipeline.buffer_size/dt_size;
-    size_t count = DPU_MIN(max_elems, sync->count_total);
-    size_t data_size = count * dt_size;
-    size_t get_idx = hc->pipeline.get_idx;
-    dpu_request_t *req = &hc->pipeline.get_reqs[get_idx];
-
-    DPU_LOG("count %lu data_size %zu src_addr %p\n", count, data_size, src_addr);
-    status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->src_rkey, &src_rkey);
-
-    req = ucp_get_nbx(hc->host_ep, hc->pipeline.get_bufs[get_idx], data_size,
-            (uint64_t)src_addr, src_rkey, &hc->req_param);
-    
-    ret = _dpu_request_wait(hc->ucp_worker, req);
-    ucp_worker_fence(hc->ucp_worker);
-    
-    sync->count_in += count;
-    hc->pipeline.count_get += count;
-    return ret;
-}
-
-int dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sync)
-{
-    int ret;
-    ucs_status_t status;
-    ucp_rkey_h dst_rkey;
-    host_rkey_t *rkeys = &sync->rkeys;
-    void *dst_addr = sync->rkeys.dst_buf;
-    size_t dt_size = dpu_ucc_dt_size(sync->dtype);
-    size_t max_elems = hc->pipeline.buffer_size/dt_size;
-    size_t count = DPU_MIN(max_elems, sync->count_total);
-    size_t data_size = count * dt_size;
-    size_t put_idx = hc->pipeline.put_idx;
-    dpu_request_t *req = &hc->pipeline.put_reqs[put_idx];
-
-    DPU_LOG("count %lu data_size %zu dst_addr %p\n", count, data_size, dst_addr);
-    status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->dst_rkey, &dst_rkey);
-
-    req = ucp_put_nbx(hc->host_ep, hc->pipeline.get_bufs[put_idx], data_size,
-            (uint64_t)dst_addr, dst_rkey, &hc->req_param);
-
-    ret = _dpu_request_wait(hc->ucp_worker, req);
-    ucp_worker_fence(hc->ucp_worker);
-    
-    coll_sync->count_serviced += count;
-    hc->pipeline.count_put += count;
-    return ret;
-}
-
 static int _dpu_hc_buffer_free(dpu_hc_t *hc, dpu_mem_t *mem)
 {
     ucp_rkey_buffer_release(mem->rkey.rkey_addr);
@@ -676,13 +620,20 @@ err:
     return ret;
 }
 
-int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id)
+int dpu_hc_wait(dpu_hc_t *hc, unsigned int next_coll_id)
 {
     dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
 
-    while( lsync->coll_id < coll_id) {
+    while( lsync->coll_id < next_coll_id) {
         ucp_worker_progress(hc->ucp_worker);
     }
+
+    host_rkey_t *rkeys = &lsync->rkeys;
+    ucs_status_t status;
+
+    status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->src_rkey_buf, &hc->src_rkey);
+
+    status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->dst_rkey_buf, &hc->dst_rkey);
 
     return 0;
 }
@@ -690,14 +641,14 @@ int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id)
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
 {
     dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
-    dpu_request_t *request;
+    dpu_request_t **req_p = &hc->pipeline.sync_req;
     int ret;
 
     fprintf(stderr, "addr: %p, coll_id: %d, serviced: %lu\n", hc->sync_addr, coll_sync->coll_id, coll_sync->count_serviced);
-    request = ucp_put_nbx(hc->host_ep, coll_sync, sizeof(dpu_get_sync_t),
+    *req_p = ucp_put_nbx(hc->host_ep, coll_sync, sizeof(dpu_get_sync_t),
                           hc->sync_addr, hc->sync_rkey,
                           &hc->req_param);
-    ret = _dpu_request_wait(hc->ucp_worker, request);
+    ret = _dpu_request_wait(hc->ucp_worker, *req_p);
     if (ret) {
         return -1;
     }
@@ -707,25 +658,73 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
     return 0;
 }
 
-#if 0
+inline int dpu_hc_can_get(dpu_hc_t *hc)
 {
-/* Work loop */
-/* TEST
- * **** */
-
-free(worker_attr.address);
-free(rem_worker_addr);
-close(connfd);
-
-ep_close(ucp_worker, dpu_ep);
-
-
-printf ("END %s\n", __FUNCTION__);
-
-return ret;
-
-err:
-return ret;
-
+    int get_idx = hc->pipeline.get_idx;
+    dpu_request_t *req = hc->pipeline.get_reqs[get_idx];
+    if (!req && hc->pipeline.gets_inflight < 2) {
+        return 1;
+    } else {
+        return 0;
+    }
 }
-#endif
+
+int dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync)
+{
+    int ret = SUCCESS;
+    void *src_addr = sync->rkeys.src_buf;
+    size_t dt_size = dpu_ucc_dt_size(sync->dtype);
+    size_t max_elems = hc->pipeline.buffer_size/dt_size;
+    size_t count = DPU_MIN(max_elems, sync->count_total);
+    size_t data_size = count * dt_size;
+    size_t get_idx = hc->pipeline.get_idx;
+    dpu_request_t **req_p = &hc->pipeline.get_reqs[get_idx];
+
+    DPU_LOG("count %lu data_size %zu src_addr %p\n", count, data_size, src_addr);
+    *req_p = ucp_get_nbx(hc->host_ep, hc->pipeline.get_bufs[get_idx], data_size,
+            (uint64_t)src_addr, hc->src_rkey, &hc->req_param);
+    hc->pipeline.gets_inflight++;
+    return ret;
+}
+
+int dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sync)
+{
+    int ret = SUCCESS;
+    void *dst_addr = sync->rkeys.dst_buf;
+    size_t dt_size = dpu_ucc_dt_size(sync->dtype);
+    size_t max_elems = hc->pipeline.buffer_size/dt_size;
+    size_t count = DPU_MIN(max_elems, sync->count_total);
+    size_t data_size = count * dt_size;
+    size_t put_idx = hc->pipeline.put_idx;
+    dpu_request_t **req_p = &hc->pipeline.put_reqs[put_idx];
+
+    DPU_LOG("count %lu data_size %zu dst_addr %p\n", count, data_size, dst_addr);
+    *req_p = ucp_put_nbx(hc->host_ep, hc->pipeline.get_bufs[put_idx], data_size,
+            (uint64_t)dst_addr, hc->dst_rkey, &hc->req_param);
+    hc->pipeline.puts_inflight++;
+    return ret;
+}
+
+int dpu_hc_progress(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sync)
+{
+    int ret;
+
+    dpu_request_t *req;
+    
+    for (int i=0; i<2; i++) {
+    req = &hc->pipeline.put_reqs[put_idx];
+    
+    ret = _dpu_request_wait(hc->ucp_worker, req);
+    ucp_worker_fence(hc->ucp_worker);
+    
+    sync->count_in += count;
+    hc->pipeline.count_get += count;
+
+    ret = _dpu_request_wait(hc->ucp_worker, req);
+    ucp_worker_fence(hc->ucp_worker);
+    
+    coll_sync->count_serviced += count;
+    hc->pipeline.count_put += count;
+    }
+    return ret;
+}
