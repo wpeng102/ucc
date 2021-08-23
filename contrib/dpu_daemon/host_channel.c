@@ -312,7 +312,7 @@ int dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync)
     size_t get_idx = hc->pipeline.get_idx;
     dpu_request_t *req = &hc->pipeline.get_reqs[get_idx];
 
-    fprintf(stderr, "count %lu data_size %zu src_addr %p\n", count, data_size, src_addr);
+    DPU_LOG("count %lu data_size %zu src_addr %p\n", count, data_size, src_addr);
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->src_rkey, &src_rkey);
 
     req->data_req = ucp_get_nbx(hc->host_ep, hc->pipeline.get_bufs[get_idx], data_size,
@@ -340,7 +340,7 @@ int dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sy
     size_t put_idx = hc->pipeline.put_idx;
     dpu_request_t *req = &hc->pipeline.put_reqs[put_idx];
 
-    fprintf(stderr, "count %lu data_size %zu dst_addr %p\n", count, data_size, dst_addr);
+    DPU_LOG("count %lu data_size %zu dst_addr %p\n", count, data_size, dst_addr);
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->dst_rkey, &dst_rkey);
 
     req->data_req = ucp_put_nbx(hc->host_ep, hc->pipeline.get_bufs[put_idx], data_size,
@@ -349,6 +349,7 @@ int dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sy
     ret = _dpu_request_wait(hc->ucp_worker, req->data_req);
     ucp_worker_fence(hc->ucp_worker);
     
+    coll_sync->count_serviced += count;
     hc->pipeline.count_put += count;
     return ret;
 }
