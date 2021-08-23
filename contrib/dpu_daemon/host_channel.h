@@ -36,6 +36,23 @@
 #define DPU_MIN(a,b) (((a)<(b))?(a):(b))
 #define DPU_MAX(a,b) (((a)>(b))?(a):(b))
 
+#ifdef NDEBUG
+#define DPU_LOG(...)
+#define CTX_LOG(...)
+#else
+#define DPU_LOG(_fmt, ...)                                  \
+do {                                                        \
+    fprintf(stderr, "%s:%d:%s(): " _fmt,                    \
+            __FILE__, __LINE__, __func__, ##__VA_ARGS__);   \
+} while (0)
+
+#define CTX_LOG(_fmt, ...)                                          \
+do {                                                                \
+    fprintf(stderr, "[%d] %s:%d:%s(): " _fmt,                       \
+            ctx->idx, __FILE__, __LINE__, __func__, ##__VA_ARGS__); \
+} while (0)
+#endif
+
 extern size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED];
 
 typedef struct dpu_req_s {
@@ -99,9 +116,9 @@ typedef struct dpu_pipeline_s {
     size_t              get_idx;
     size_t              red_idx;
     size_t              put_idx;
-    size_t              count_get;
-    size_t              count_red;
-    size_t              count_put;
+    volatile size_t     count_get;
+    volatile size_t     count_red;
+    volatile size_t     count_put;
 } dpu_pipeline_t;
 
 typedef struct dpu_hc_s {
