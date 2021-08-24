@@ -19,6 +19,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 
+#include "server_ucc.h"
 #include <ucc/api/ucc.h>
 #include <ucp/api/ucp.h>
 
@@ -76,7 +77,6 @@ typedef struct dpu_put_sync_t {
     ucc_reduction_op_t  op;
     ucc_coll_type_t     coll_type;
     volatile uint32_t   count_total;
-    volatile uint32_t   count_in;
     volatile uint32_t   coll_id;
 } dpu_put_sync_t;
 
@@ -102,21 +102,54 @@ typedef struct dpu_mem_segs_t {
     dpu_mem_t out;
 } dpu_mem_segs_t;
 
+typedef enum dpu_pipeline_stage_state_t {
+    FREE,
+    IN_PROGRESS,
+    DONE,
+} dpu_pipeline_stage_state_t;
+
+typedef struct dpu_pipeline_stage_t {
+    volatile dpu_pipeline_stage_state_t state;
+    void                      *buf;
+    dpu_request_t             *ucp_req;
+    volatile size_t            count;
+} dpu_pipeline_stage_t;
+
+typedef struct dpu_stage_t {
+    dpu_pipeline_stage_t get;
+    dpu_pipeline_stage_t ar;
+    dpu_pipeline_stage_t put;
+} dpu_stage_t;
+
+typedef struct inflight_t {
+    volatile int get;
+    volatile int put;
+    volatile int ar;
+} inflight_t;
+
+typedef struct cur_idx_t {
+    volatile int get;
+    volatile int put;
+    volatile int ar;
+} cur_idx_t;
+
+typedef struct count_t {
+    volatile size_t issued;
+    volatile size_t done;
+} count_t;
+
 typedef struct dpu_pipeline_t {
+    dpu_stage_t         stage[2];
+    inflight_t          inflight;
+    cur_idx_t           idx;
+
     size_t              buffer_size;
-    void               *get_bufs[2];
-    void               *put_bufs[2];
-    dpu_request_t      *get_reqs[2];
-    dpu_request_t      *put_reqs[2];
+    size_t              num_buffers;
     dpu_request_t      *sync_req;
-    size_t              get_idx;
-    size_t              red_idx;
-    size_t              put_idx;
-    size_t              count_get;
-    size_t              count_red;
-    size_t              count_put;
-    int                 gets_inflight;
-    int                 puts_inflight;
+
+    count_t count_get;
+    count_t count_red;
+    count_t count_put;
 } dpu_pipeline_t;
 
 typedef struct dpu_hc_t {
@@ -150,9 +183,38 @@ int dpu_hc_accept(dpu_hc_t *hc);
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync);
 int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id);
 
-int dpu_hc_issue_get(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync);
-int dpu_hc_issue_put(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, dpu_get_sync_t *coll_sync);
+
+typedef struct thread_ctx_t {
+    pthread_t       id;
+    int             idx;
+    int             nthreads;
+    dpu_ucc_comm_t  comm;
+    dpu_hc_t        *hc;
+    unsigned int    buf_idx;
+    dpu_get_sync_t  coll_sync;
+} thread_ctx_t;
+
+/* thread accisble data - split reader/writer */
+typedef struct thread_sync_t {
+    volatile unsigned int todo;     /* first cache line */
+    volatile unsigned int pad1[15]; /* pad to 64bytes */
+    volatile unsigned int done;     /* second cache line */
+    volatile unsigned int pad2[15]; /* pad to 64 bytes */
+} thread_sync_t;
+
+extern thread_sync_t *thread_main_sync;
+extern thread_sync_t *thread_sub_sync;
+
+int dpu_hc_issue_get(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+int dpu_hc_issue_put(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+int dpu_hc_issue_allreduce(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+int dpu_hc_progress(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);
+
+void dpu_waitfor_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync);
+void dpu_signal_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync);
+void dpu_waitfor_comp_threads(thread_ctx_t *ctx, thread_sync_t *sync);
+void dpu_signal_comp_threads(thread_ctx_t *ctx, thread_sync_t *sync);
 
 #endif
