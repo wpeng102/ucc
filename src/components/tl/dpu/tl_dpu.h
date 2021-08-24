@@ -83,7 +83,6 @@ typedef struct ucc_tl_dpu_put_sync_t {
     ucc_reduction_op_t       op;
     ucc_coll_type_t          coll_type;
     uint32_t                 count_total;
-    uint32_t                 count_out;
     uint32_t                 coll_id;
 } ucc_tl_dpu_put_sync_t;
 

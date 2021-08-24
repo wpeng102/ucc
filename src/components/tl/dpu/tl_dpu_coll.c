@@ -174,10 +174,10 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
 
     ucp_worker_fence(ctx->ucp_worker);
     ucc_tl_dpu_init_put(ctx, task, team);
-    memcpy(&put_req->sync_data, &task->put_sync, sizeof(task->put_sync));
+    //memcpy(&put_req->sync_data, &task->put_sync, sizeof(task->put_sync));
 
     put_req->sync_req =
-        ucp_put_nbx(ctx->ucp_ep, &put_req->sync_data , sizeof(task->put_sync),
+        ucp_put_nbx(ctx->ucp_ep, &task->put_sync, sizeof(task->put_sync),
                     team->rem_ctrl_seg, team->rem_ctrl_seg_key,
                     req_param);
     if (ucc_tl_dpu_req_check(team, put_req->sync_req) != UCC_OK) {
@@ -199,7 +199,8 @@ static ucc_status_t ucc_tl_dpu_check_progress(
     ucp_worker_progress(ctx->ucp_worker);
 
     __sync_synchronize();
-    if (team->get_sync.count_serviced < task->args.src.info.count) {
+    if (team->get_sync.coll_id < task->put_sync.coll_id ||
+        team->get_sync.count_serviced < task->put_sync.count_total) {
         return UCC_INPROGRESS;
     } else {
         return UCC_OK;
@@ -299,7 +300,6 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     task->put_sync.coll_id           = team->coll_id;
     task->put_sync.dtype             = coll_args->src.info.datatype;
     task->put_sync.count_total       = coll_args->src.info.count;
-    task->put_sync.count_out         = 0;
     task->put_sync.op                = coll_args->reduce.predefined_op;
     task->put_sync.coll_type         = coll_args->coll_type;
     task->get_sync.coll_id           = 0;
@@ -388,7 +388,6 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
     task->put_sync.coll_id           = team->coll_id;
     task->put_sync.dtype             = coll_args->src.info.datatype;
     task->put_sync.count_total       = coll_args->src.info.count;
-    task->put_sync.count_out         = 0;
     task->put_sync.coll_type         = coll_args->coll_type;
     task->get_sync.coll_id           = 0;
     task->get_sync.count_serviced    = 0;
