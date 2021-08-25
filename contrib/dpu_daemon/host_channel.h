@@ -205,10 +205,10 @@ typedef struct thread_sync_t {
 extern thread_sync_t *thread_main_sync;
 extern thread_sync_t *thread_sub_sync;
 
-int dpu_hc_issue_get(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
-int dpu_hc_issue_put(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
-int dpu_hc_issue_allreduce(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
-int dpu_hc_progress(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+ucs_status_t dpu_hc_issue_get(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+ucs_status_t dpu_hc_issue_put(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+ucs_status_t dpu_hc_progress(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);
 
