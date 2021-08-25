@@ -63,13 +63,13 @@ static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, 
         .coll_type = UCC_COLL_TYPE_ALLREDUCE,
         .mask      = UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS,
         .src.info = {
-            .buffer   = (char *)src_buf + offset,
+            .buffer   = src_buf + offset,
             .count    = block,
             .datatype = dtype,
             .mem_type = UCC_MEMORY_TYPE_HOST,
         },
         .dst.info = {
-            .buffer   = (char *)dst_buf + offset,
+            .buffer   = dst_buf + offset,
             .count    = block,
             .datatype = dtype,
             .mem_type = UCC_MEMORY_TYPE_HOST,
@@ -252,11 +252,11 @@ void *dpu_worker(void *arg)
             size_t final_idx = ctx->coll_sync.count_serviced + offset;
             unsigned long *src_buf = (unsigned long*)(ctx->hc->pipeline.stage[ctx->buf_idx].get.buf + offset * dt_size);
             unsigned long *dst_buf = (unsigned long*)(ctx->hc->pipeline.stage[ctx->buf_idx].put.buf + offset * dt_size);
-            CTX_LOG("coll id %d DATA i %lu src %lu dst %lu\n", ctx->coll_sync.coll_id, final_idx, *src_buf, *dst_buf);
+            CTX_LOG("coll id %d DATA i %lu src %lu %lu dst %lu %lu\n", ctx->coll_sync.coll_id, final_idx, src_buf[0], src_buf[block-1], dst_buf[0], dst_buf[block-1]);
 
             ctx->buf_idx = (ctx->buf_idx + 1) % ctx->hc->pipeline.num_buffers;
             ctx->coll_sync.count_serviced += count_serviced;
-
+            __sync_synchronize();
             dpu_signal_comm_thread(ctx, thread_sub_sync);
 
         } while (ctx->coll_sync.count_serviced < count_total);
