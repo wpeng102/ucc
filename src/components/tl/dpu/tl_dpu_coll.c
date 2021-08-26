@@ -116,7 +116,6 @@ static ucs_status_t ucc_tl_dpu_register_buf(
         goto err_map;
     }
 
-    fprintf(stderr, "base: %p size: %lu rkey buf: %p len: %lu\n", base, size, rkey->rkey_buf, rkey->rkey_buf_size);
     goto out;
 err_map:
     ucp_mem_unmap(ucp_ctx, rkey->memh);
@@ -140,7 +139,6 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
     size_t src_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
     size_t dst_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
 
-    fprintf(stderr, "src count: %lu, len: %zu, dst count %lu, len %zu\n", task->args.src.info.count, src_len, task->args.dst.info.count, dst_len);
     status |= ucc_tl_dpu_register_buf(ctx->ucp_context, src_buf, src_len, &task->src_rkey);
     status |= ucc_tl_dpu_register_buf(ctx->ucp_context, dst_buf, dst_len, &task->dst_rkey);
 

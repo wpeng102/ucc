@@ -35,7 +35,6 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
                                 UCP_MEM_MAP_PARAM_FIELD_LENGTH;
     self->conn_buf->mmap_params.address = (void*)&self->get_sync;
     self->conn_buf->mmap_params.length = sizeof(ucc_tl_dpu_get_sync_t);
-    fprintf(stderr, "get sync addr: %p\n", &self->get_sync);
 
     ucc_status = ucs_status_to_ucc_status(
             ucp_mem_map(ctx->ucp_context, &self->conn_buf->mmap_params,
