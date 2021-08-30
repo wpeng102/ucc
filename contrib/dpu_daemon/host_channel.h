@@ -45,20 +45,18 @@
 do {                                                        \
     fprintf(stderr, "%s:%d:%s(): " _fmt,                    \
             __FILE__, __LINE__, __func__, ##__VA_ARGS__);   \
+    fflush(stderr);                                                 \
 } while (0)
 
 #define CTX_LOG(_fmt, ...)                                          \
 do {                                                                \
     fprintf(stderr, "[%d] %s:%d:%s(): " _fmt,                       \
             ctx->idx, __FILE__, __LINE__, __func__, ##__VA_ARGS__); \
+    fflush(stderr);                                                 \
 } while (0)
 #endif
 
 extern size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED];
-
-typedef struct dpu_request_t {
-    int complete;
-} dpu_request_t;
 
 typedef struct host_rkey_t {
     char    src_rkey_buf[MAX_RKEY_LEN];
@@ -111,7 +109,7 @@ typedef enum dpu_pipeline_stage_state_t {
 typedef struct dpu_pipeline_stage_t {
     volatile dpu_pipeline_stage_state_t state;
     void                      *buf;
-    dpu_request_t             *ucp_req;
+    ucs_status_ptr_t          *ucp_req;
     volatile size_t            count;
 } dpu_pipeline_stage_t;
 
@@ -145,7 +143,7 @@ typedef struct dpu_pipeline_t {
 
     size_t              buffer_size;
     size_t              num_buffers;
-    dpu_request_t      *sync_req;
+    ucs_status_ptr_t   *sync_req;
 
     count_t count_get;
     count_t count_red;
