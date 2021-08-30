@@ -53,7 +53,7 @@ static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, 
     *count_p = count;
     
     CTX_LOG("Init AR idx %d src %p dst %p count %lu, block %lu, offset %lu, bytes %lu\n",
-            ar_idx, src_buf, dst_buf, count, block, offset, block*dt_size);
+             ar_idx, src_buf, dst_buf, count, block, offset, block*dt_size);
     if (block == 0) {
         *request = NULL;
         return;
@@ -166,7 +166,6 @@ void dpu_comm_worker(void *arg)
         ctx->buf_idx = 0;
 
         dpu_wait_for_next_coll(ctx);
-        dpu_signal_comp_threads(ctx, thread_main_sync);
 
         unsigned int    coll_id     = lsync->coll_id;
         ucc_coll_type_t coll_type   = lsync->coll_type;
@@ -175,6 +174,7 @@ void dpu_comm_worker(void *arg)
             "Start coll id: %d, type: %d, count total: %lu\n",
             coll_id, coll_type, count_total);
 
+        dpu_signal_comp_threads(ctx, thread_main_sync);
         if (coll_type == UCC_COLL_TYPE_LAST) {
             /* Hang up */
             break;
@@ -244,15 +244,6 @@ void *dpu_worker(void *arg)
                 }
                 UCC_CHECK(ucc_collective_finalize(request));
             }
-            
-            size_t dt_size = dpu_ucc_dt_size(lsync->dtype);
-            size_t count = ctx->hc->pipeline.stage[ctx->buf_idx].get.count;
-            size_t block = count / ctx->nthreads;
-            size_t offset = block * ctx->idx;
-            size_t final_idx = ctx->coll_sync.count_serviced + offset;
-            unsigned long *src_buf = (unsigned long*)(ctx->hc->pipeline.stage[ctx->buf_idx].get.buf + offset * dt_size);
-            unsigned long *dst_buf = (unsigned long*)(ctx->hc->pipeline.stage[ctx->buf_idx].put.buf + offset * dt_size);
-            CTX_LOG("coll id %d DATA i %lu src %lu %lu dst %lu %lu\n", ctx->coll_sync.coll_id, final_idx, src_buf[0], src_buf[block-1], dst_buf[0], dst_buf[block-1]);
 
             ctx->buf_idx = (ctx->buf_idx + 1) % ctx->hc->pipeline.num_buffers;
             ctx->coll_sync.count_serviced += count_serviced;
