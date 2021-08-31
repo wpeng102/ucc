@@ -149,7 +149,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
     memset(&worker_params, 0, sizeof(worker_params));
     worker_params.field_mask    = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
-    worker_params.thread_mode   = UCS_THREAD_MODE_SINGLE;
+    worker_params.thread_mode   = UCS_THREAD_MODE_MULTI;
 
     ucc_status = ucs_status_to_ucc_status(
                     ucp_worker_create(ucp_context, &worker_params, &ucp_worker));
@@ -218,6 +218,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     self->ucp_context   = ucp_context;
     self->ucp_worker    = ucp_worker;
     self->ucp_ep        = ucp_ep;
+    self->inflight      = 0;
 
     tl_info(self->super.super.lib, "context created");
     return ucc_status;
