@@ -35,6 +35,13 @@ typedef struct ucc_tl_dpu_request {
   ucc_tl_dpu_request_status_t status;
 } ucc_tl_dpu_request_t;
 
+typedef enum {
+    UCC_TL_DPU_TASK_STATUS_INIT,
+    UCC_TL_DPU_TASK_STATUS_POSTED,
+    UCC_TL_DPU_TASK_STATUS_DONE,
+    UCC_TL_DPU_TASK_STATUS_FINALIZED,
+} ucc_tl_dpu_task_status_t;
+
 typedef struct ucc_tl_dpu_iface {
     ucc_tl_iface_t super;
 } ucc_tl_dpu_iface_t;
@@ -64,6 +71,7 @@ typedef struct ucc_tl_dpu_context {
     ucp_context_h               ucp_context;
     ucp_worker_h                ucp_worker;
     ucp_ep_h                    ucp_ep;
+    volatile size_t             inflight;
 } ucc_tl_dpu_context_t;
 UCC_CLASS_DECLARE(ucc_tl_dpu_context_t, const ucc_base_context_params_t *,
                   const ucc_base_config_t *);
@@ -151,6 +159,7 @@ typedef struct ucc_tl_dpu_task {
     ucc_tl_dpu_task_req_t    task_reqs;
     ucc_tl_dpu_rkey_t        src_rkey;
     ucc_tl_dpu_rkey_t        dst_rkey;
+    volatile ucc_tl_dpu_task_status_t status;
 } ucc_tl_dpu_task_t;
 
 typedef struct ucc_tl_dpu_config {
