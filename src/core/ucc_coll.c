@@ -185,6 +185,6 @@ UCC_CORE_PROFILE_FUNC(ucc_status_t, ucc_collective_finalize, (request),
 {
     ucc_coll_task_t *task = ucc_derived_of(request, ucc_coll_task_t);
 
-    ucc_debug("coll_finalize: req %p", task);
+    ucc_info("coll_finalize: req %p", task);
     return task->finalize(task);
 }
