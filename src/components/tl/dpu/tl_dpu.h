@@ -9,6 +9,7 @@
 
 #include "components/tl/ucc_tl.h"
 #include "components/tl/ucc_tl_log.h"
+#include "utils/ucc_mpool.h"
 #include <ucp/api/ucp.h>
 #include <limits.h>
 
@@ -71,6 +72,7 @@ typedef struct ucc_tl_dpu_context {
     ucp_context_h               ucp_context;
     ucp_worker_h                ucp_worker;
     ucp_ep_h                    ucp_ep;
+    ucc_mpool_t                 req_mp;
     volatile size_t             inflight;
 } ucc_tl_dpu_context_t;
 UCC_CLASS_DECLARE(ucc_tl_dpu_context_t, const ucc_base_context_params_t *,

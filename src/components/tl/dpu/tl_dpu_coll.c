@@ -27,20 +27,6 @@ void ucc_tl_dpu_recv_handler_nbx(void *request, ucs_status_t status,
   req->status = UCC_TL_DPU_UCP_REQUEST_DONE;
 }
 
-static ucc_tl_dpu_task_t * ucc_tl_dpu_alloc_task(void)
-{
-    ucc_tl_dpu_task_t *task =
-        (ucc_tl_dpu_task_t *) ucc_calloc(1, sizeof(ucc_tl_dpu_task_t),
-                                         "Allocate task");
-    return task;
-}
-
-static ucc_status_t ucc_tl_dpu_free_task(ucc_tl_dpu_task_t *task)
-{
-    ucc_free(task);
-    return UCC_OK;
-}
-
 void ucc_tl_dpu_req_init(void* request)
 {
     ucc_tl_dpu_request_t *req = (ucc_tl_dpu_request_t *)request;
@@ -208,7 +194,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
     if (task->status == UCC_TL_DPU_TASK_STATUS_INIT && ctx->inflight == 0) {
         ctx->inflight++;
         task->status = UCC_TL_DPU_TASK_STATUS_POSTED;
-        tl_info(team->super.super.context->lib, "Put to DPU coll task: %p", task);
+        tl_info(UCC_TL_TEAM_LIB(task->team), "Put to DPU coll task: %p", task);
         status = ucc_tl_dpu_issue_put(task, ctx, team);
         if (UCC_OK != status) {
             return UCC_ERR_NO_MESSAGE;
@@ -225,6 +211,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
         }
         else {
             task->status = UCC_TL_DPU_TASK_STATUS_DONE;
+            ctx->inflight--;
             return UCC_OK;
         }
     }
@@ -248,37 +235,27 @@ ucc_status_t ucc_tl_dpu_allreduce_start(ucc_coll_task_t *coll_task)
 {
     ucc_tl_dpu_task_t    *task        = ucs_derived_of(coll_task, ucc_tl_dpu_task_t);
     ucc_tl_dpu_team_t    *team        = task->team;
-    ucc_tl_dpu_context_t *ctx         = UCC_TL_DPU_TEAM_CTX(team);
-    size_t               count_total  = task->args.src.info.count;
-    ucc_datatype_t       dt           = task->args.src.info.datatype;
-    size_t               dt_size      = ucc_dt_size(dt);
     ucc_status_t         status;
  
-    tl_info(team->super.super.context->lib, "Allreduce start");
+    tl_info(UCC_TL_TEAM_LIB(task->team), "Allreduce start task %p", task);
 
     if (UCC_IS_INPLACE(task->args)) {
         task->args.dst.info.buffer = task->args.src.info.buffer;
     }
 
-    // status = ucc_tl_dpu_check_progress(task, ctx);
-    // task->super.super.status = status;
+    status = ucc_tl_dpu_allreduce_progress(coll_task);
+    if (UCC_INPROGRESS == status) {
+        ucc_progress_enqueue(UCC_TL_DPU_TEAM_CORE_CTX(team)->pq, coll_task);
+        return UCC_OK;
+    }
 
-    // if (UCC_INPROGRESS == status) {
-        status = ucc_tl_dpu_allreduce_progress(&task->super);
-        if (UCC_INPROGRESS == status) {
-            ucc_progress_enqueue(UCC_TL_DPU_TEAM_CORE_CTX(team)->pq, &task->super);
-            return UCC_OK;
-        }
-    //}
-
-    return status;
+    return ucc_task_complete(coll_task);
 }
 
 ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
 {
     ucc_coll_args_t      *coll_args = &task->args;
     ucc_tl_dpu_team_t    *team      = task->team;
-    ucc_tl_dpu_context_t *ctx       = UCC_TL_DPU_TEAM_CTX(team);
 
     if (task->args.mask & UCC_COLL_ARGS_FIELD_USERDEFINED_REDUCTIONS) {
         tl_error(UCC_TL_TEAM_LIB(task->team),
@@ -288,7 +265,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     if (!UCC_IS_INPLACE(task->args) && (task->args.src.info.mem_type !=
                                         task->args.dst.info.mem_type)) {
         tl_error(UCC_TL_TEAM_LIB(task->team),
-                 "assymetric src/dst memory types are not supported yetpp");
+                 "assymetric src/dst memory types are not supported yet");
         return UCC_ERR_NOT_SUPPORTED;
     }
 
@@ -300,6 +277,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     task->put_sync.coll_type         = coll_args->coll_type;
     task->get_sync.coll_id           = 0;
     task->get_sync.count_serviced    = 0;
+    ucc_tl_dpu_init_rkeys(task);
 
     task->super.post     = ucc_tl_dpu_allreduce_start;
     task->super.progress = ucc_tl_dpu_allreduce_progress;
@@ -325,29 +303,21 @@ ucc_status_t ucc_tl_dpu_alltoall_start(ucc_coll_task_t *coll_task)
 {
     ucc_tl_dpu_task_t    *task        = ucs_derived_of(coll_task, ucc_tl_dpu_task_t);
     ucc_tl_dpu_team_t    *team        = task->team;
-    ucc_tl_dpu_context_t *ctx         = UCC_TL_DPU_TEAM_CTX(team);
-    size_t               count_total  = task->args.src.info.count;
-    ucp_request_param_t  *req_param;
     ucc_status_t         status;
  
-    tl_info(team->super.super.context->lib, "Alltoall start");
+    tl_info(UCC_TL_TEAM_LIB(task->team), "Alltoall start task %p", task);
 
     if (UCC_IS_INPLACE(task->args)) {
         task->args.dst.info.buffer = task->args.src.info.buffer;
     }
 
-    status = ucc_tl_dpu_check_progress(task, ctx);
-    task->super.super.status = status;
-
+    status = ucc_tl_dpu_alltoall_progress(coll_task);
     if (UCC_INPROGRESS == status) {
-        status = ucc_tl_dpu_alltoall_progress(&task->super);
-        if (UCC_INPROGRESS == status) {
-            ucc_progress_enqueue(UCC_TL_DPU_TEAM_CORE_CTX(team)->pq, &task->super);
-            return UCC_OK;
-        }
+        ucc_progress_enqueue(UCC_TL_DPU_TEAM_CORE_CTX(team)->pq, coll_task);
+        return UCC_OK;
     }
 
-    return status;
+    return ucc_task_complete(coll_task);
 }
 
 ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
@@ -369,6 +339,7 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
     task->put_sync.coll_type         = coll_args->coll_type;
     task->get_sync.coll_id           = 0;
     task->get_sync.count_serviced    = 0;
+    ucc_tl_dpu_init_rkeys(task);
 
     memset(&task->task_reqs.req_param, 0, sizeof(ucp_request_param_t));
     task->super.post     = ucc_tl_dpu_alltoall_start;
@@ -380,18 +351,20 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
 static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
 {
     ucc_tl_dpu_task_t *task = ucc_derived_of(coll_task, ucc_tl_dpu_task_t);
-    ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(task->team);
-    tl_info(task->team->super.super.context->lib, "finalizing task %p, status %d, coll id %u", task, task->status, task->team->coll_id);
-    if(task->status != UCC_TL_DPU_TASK_STATUS_DONE) {
-        tl_error(UCC_TL_TEAM_LIB(task->team),
-                 "task %p NOT DONE, status %d, coll id %u",
+    tl_info(UCC_TL_TEAM_LIB(task->team),
+            "finalizing task %p, task status %d, coll status %d, coll id %u",
+            task, task->status, coll_task->super.status, task->team->coll_id);
+
+    assert(coll_task->super.status == UCC_OK);
+    if(task->status == UCC_TL_DPU_TASK_STATUS_FINALIZED) {
+        tl_warn(UCC_TL_TEAM_LIB(task->team),
+                 "task %p already finalized, status %d, coll id %u",
                  task, task->status, task->team->coll_id);
-        return UCS_OK;
+        return UCC_OK;
     }
+
     ucc_tl_dpu_finalize_rkeys(task);
-    ucc_tl_dpu_free_task(task);
-    ctx->inflight--;
-    task->status = UCC_TL_DPU_TASK_STATUS_FINALIZED;
+    ucc_mpool_put(task);
     return UCC_OK;
 }
 
@@ -400,7 +373,8 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
                                          ucc_coll_task_t    **task_h)
 {
     ucc_tl_dpu_team_t    *tl_team = ucc_derived_of(team, ucc_tl_dpu_team_t);
-    ucc_tl_dpu_task_t    *task    = ucc_tl_dpu_alloc_task();
+    ucc_tl_dpu_context_t *ctx     = UCC_TL_DPU_TEAM_CTX(tl_team);
+    ucc_tl_dpu_task_t    *task    = ucc_mpool_get(&ctx->req_mp);
     ucc_status_t          status  = UCC_OK;
 
     ucc_coll_task_init(&task->super, &coll_args->args, team);
@@ -414,9 +388,6 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
     task->super.triggered_post       = NULL;
     task->status                     = UCC_TL_DPU_TASK_STATUS_INIT;
 
-    /* Increase your inflight collective count */
-    // ucc_tl_dpu_context_t *ctx        = UCC_TL_DPU_TEAM_CTX(tl_team);
-    // ctx->inflight++;
     tl_team->coll_id++;
 
     switch (coll_args->args.coll_type) {
@@ -430,11 +401,10 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
         status = UCC_ERR_NOT_SUPPORTED;
     }
     if (status != UCC_OK) {
-        ucc_tl_dpu_free_task(task);
+        ucc_mpool_put(task);
         return status;
     }
 
-    ucc_tl_dpu_init_rkeys(task);
     tl_info(team->context->lib, "init coll req %p", task);
     *task_h = &task->super;
     return status;

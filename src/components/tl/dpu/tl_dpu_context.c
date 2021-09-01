@@ -20,6 +20,13 @@
 #include <errno.h>
 #include <unistd.h>
 
+static ucc_mpool_ops_t ucc_tl_dpu_req_mpool_ops = {
+    .chunk_alloc   = ucc_mpool_hugetlb_malloc,
+    .chunk_release = ucc_mpool_hugetlb_free,
+    .obj_init      = NULL,
+    .obj_cleanup   = NULL
+};
+
 static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 {
     ucc_error("error handling callback was invoked with status %d (%s)\n",
@@ -215,6 +222,15 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
         goto err_cleanup_worker;
     }
 
+    ucc_status = ucc_mpool_init(&self->req_mp, 0, sizeof(ucc_tl_dpu_task_t), 0,
+                                UCC_CACHE_LINE_SIZE, 8, UINT_MAX,
+                                &ucc_tl_dpu_req_mpool_ops,
+                                worker_params.thread_mode, "tl_dpu_req_mp");
+    if (UCC_OK != ucc_status) {
+        tl_error(self->super.super.lib, "failed to initialize tl_dpu_req mpool");
+        goto err_cleanup_mpool;
+    }
+
     self->ucp_context   = ucp_context;
     self->ucp_worker    = ucp_worker;
     self->ucp_ep        = ucp_ep;
@@ -223,6 +239,8 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     tl_info(self->super.super.lib, "context created");
     return ucc_status;
 
+err_cleanup_mpool:
+    ucc_mpool_cleanup(&self->req_mp, 1);
 err_cleanup_worker:
     ucp_worker_destroy(self->ucp_worker);
 err_cleanup_context:
@@ -252,6 +270,7 @@ UCC_CLASS_CLEANUP_FUNC(ucc_tl_dpu_context_t)
     } else if (UCS_PTR_STATUS(close_req) != UCS_OK) {
         tl_error(self->super.super.lib, "failed to close ep %p\n", (void *)self->ucp_ep);
     }
+    ucc_mpool_cleanup(&self->req_mp, 1);
     ucp_worker_destroy(self->ucp_worker);
     ucp_cleanup(self->ucp_context);
 }
