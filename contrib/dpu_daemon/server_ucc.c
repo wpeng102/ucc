@@ -120,7 +120,7 @@ int dpu_ucc_alloc_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
     ucc_context_params_t ctx_params = {
         .mask   = UCC_CONTEXT_PARAM_FIELD_TYPE |
                   UCC_CONTEXT_PARAM_FIELD_OOB,
-        .type   = UCC_CONTEXT_SHARED,
+        .type   = UCC_CONTEXT_EXCLUSIVE,
         .oob = {
             .allgather    = oob_allgather,
             .req_test     = oob_allgather_test,

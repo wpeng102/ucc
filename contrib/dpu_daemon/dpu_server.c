@@ -92,6 +92,7 @@ static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, 
         },
     };
 
+    CTX_LOG("### B4 AR %d\n", *((int*)src_buf+1));
     UCC_CHECK(ucc_collective_init(&coll, request, ctx->comm.team));
     assert(*request != NULL);
 }
@@ -133,6 +134,8 @@ void dpu_waitfor_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync)
 
 void dpu_signal_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync)
 {
+    assert(sync[ctx->idx].todo);
+    assert(!sync[ctx->idx].done);
     sync[ctx->idx].todo = 0;
     sync[ctx->idx].done = 1;
 }
@@ -205,6 +208,7 @@ void dpu_comm_worker(void *arg)
             dpu_hc_progress(ctx->hc, lsync, ctx);
         }
 
+        CTX_LOG("Waiting for worker threads to complete coll id: %d, type: %d\n", coll_id, coll_type);
         dpu_waitfor_comp_threads(ctx, thread_main_sync);
         dpu_mark_coll_done(ctx, lsync);
         CTX_LOG("End coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
@@ -264,9 +268,14 @@ void *dpu_worker(void *arg)
                 UCC_CHECK(ucc_collective_finalize(request));
             }
 
+            void *dst_buf = ctx->hc->pipeline.stage[ctx->buf_idx].put.buf;
+            CTX_LOG("### After AR %d\n", *((int*)dst_buf+1));
             ctx->buf_idx = (ctx->buf_idx + 1) % ctx->hc->pipeline.num_buffers;
             ctx->coll_sync.count_serviced += count_serviced;
             __sync_synchronize();
+
+            CTX_LOG("Progressed coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
+                coll_id, coll_type, count_total, (size_t)ctx->coll_sync.count_serviced);
             dpu_signal_comm_thread(ctx, thread_sub_sync);
 
         } while (ctx->coll_sync.count_serviced < count_total);
