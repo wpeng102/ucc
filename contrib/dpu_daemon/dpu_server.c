@@ -14,11 +14,12 @@
 #include "host_channel.h"
 #include "ucc/api/ucc.h"
 
-#define CORES 8
+#define CORES 6
 #define MAX_THREADS 128
 
 thread_sync_t *thread_main_sync = NULL;
 thread_sync_t *thread_sub_sync = NULL;
+dpu_put_sync_t tmp_sync = {0};
 
 static void dpu_thread_set_affinity(thread_ctx_t *ctx)
 {
@@ -27,29 +28,41 @@ static void dpu_thread_set_affinity(thread_ctx_t *ctx)
     pthread_t thread = pthread_self();
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    
-	for (i = 0; i < places; i++) {
-		CPU_SET((ctx->idx*places)+i, &cpuset);
-	}
-    
+
+    if (ctx->idx >= 0) {
+        for (i = 0; i < places; i++) {
+            CPU_SET((ctx->idx * places) + i, &cpuset);
+        }
+    }
+    else {
+        CPU_SET(CORES+1, &cpuset);
+    }
+
     pthread_setaffinity_np(thread, sizeof(cpuset), &cpuset);
 }
 
 static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, size_t *count_p, dpu_put_sync_t *lsync)
 {
     int ar_idx = ctx->buf_idx;
-    assert(ctx->hc->pipeline.stage[ar_idx].get.state == DONE);
-    assert(ctx->hc->pipeline.stage[ar_idx].ar.state  == IN_PROGRESS);
-    assert(ctx->hc->pipeline.stage[ar_idx].put.state == FREE);
+    dpu_stage_t *ar_stage = &ctx->hc->pipeline.stage[ar_idx];
+    assert(ar_stage->get.state == DONE);
+    assert(ar_stage->ar.state  == IN_PROGRESS);
+    assert(ar_stage->put.state == FREE);
 
+    ucc_reduction_op_t op = lsync->op;
     ucc_datatype_t dtype = lsync->dtype;
     size_t dt_size = dpu_ucc_dt_size(dtype);
-    size_t count = ctx->hc->pipeline.stage[ar_idx].get.count;
+    size_t count = ar_stage->get.count;
     size_t block = count / ctx->nthreads;
     size_t offset = block * ctx->idx * dt_size;
+
+    /* Do any leftover elements in the last thread */
+    if (ctx->idx == ctx->nthreads - 1) {
+        block += count % block;
+    }
     
-    void *src_buf = ctx->hc->pipeline.stage[ar_idx].get.buf;
-    void *dst_buf = ctx->hc->pipeline.stage[ar_idx].put.buf;
+    void *src_buf = ar_stage->get.buf;
+    void *dst_buf = ar_stage->put.buf;
     *count_p = count;
     
     CTX_LOG("Init AR idx %d src %p dst %p count %lu, block %lu, offset %lu, bytes %lu\n",
@@ -75,7 +88,7 @@ static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, 
             .mem_type = UCC_MEMORY_TYPE_HOST,
         },
         .reduce = {
-            .predefined_op = lsync->op,
+            .predefined_op = op,
         },
     };
 
@@ -115,6 +128,7 @@ void dpu_waitfor_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync)
 {
     /* busy wait */
     while (!sync[ctx->idx].todo);
+    assert(!sync[ctx->idx].done);
 }
 
 void dpu_signal_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync)
@@ -144,6 +158,8 @@ void dpu_wait_for_next_coll(thread_ctx_t *ctx)
 {
     dpu_hc_wait(ctx->hc, ctx->coll_sync.coll_id);
     __sync_synchronize();
+    memcpy(&tmp_sync, (dpu_put_sync_t*)ctx->hc->mem_segs.sync.base, sizeof(tmp_sync));
+    __sync_synchronize();
 }
 
 void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
@@ -155,8 +171,9 @@ void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 void dpu_comm_worker(void *arg)
 {
     thread_ctx_t *ctx = (thread_ctx_t*)arg;
-    dpu_put_sync_t *lsync = ctx->hc->mem_segs.sync.base;
+    dpu_put_sync_t *lsync = &tmp_sync; //ctx->hc->mem_segs.sync.base;
     assert(ctx->idx == -1);
+    dpu_thread_set_affinity(ctx);
     CTX_LOG("Started comm thread\n");
 
 
@@ -198,7 +215,7 @@ void dpu_comm_worker(void *arg)
 void *dpu_worker(void *arg)
 {
     thread_ctx_t *ctx = (thread_ctx_t*)arg;
-    dpu_put_sync_t *lsync = ctx->hc->mem_segs.sync.base;
+    dpu_put_sync_t *lsync = &tmp_sync; //ctx->hc->mem_segs.sync.base;
     ucc_coll_req_h request = NULL;
     size_t count_serviced;
 
@@ -210,6 +227,7 @@ void *dpu_worker(void *arg)
         ctx->buf_idx = 0;
 
         dpu_waitfor_comm_thread(ctx, thread_main_sync);
+        __sync_synchronize();
 
         unsigned int coll_id      = lsync->coll_id;
         ucc_coll_type_t coll_type = lsync->coll_type;
@@ -225,6 +243,7 @@ void *dpu_worker(void *arg)
         /* Process all data */
         do {
             dpu_waitfor_comm_thread(ctx, thread_sub_sync);
+            __sync_synchronize();
 
             if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
                 dpu_coll_init_allreduce(ctx, &request, &count_serviced, lsync);

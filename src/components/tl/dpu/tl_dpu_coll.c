@@ -101,6 +101,7 @@ static ucs_status_t ucc_tl_dpu_register_buf(
         fprintf(stderr, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status));
         goto err_map;
     }
+    assert(rkey->rkey_buf_size < MAX_RKEY_LEN);
 
     goto out;
 err_map:
@@ -130,7 +131,7 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
     void *src_buf = task->args.src.info.buffer;
     void *dst_buf = task->args.dst.info.buffer;
     size_t src_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
-    size_t dst_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
+    size_t dst_len = task->args.dst.info.count * ucc_dt_size(task->args.dst.info.datatype);
 
     status |= ucc_tl_dpu_register_buf(ctx->ucp_context, src_buf, src_len, &task->src_rkey);
     status |= ucc_tl_dpu_register_buf(ctx->ucp_context, dst_buf, dst_len, &task->dst_rkey);
@@ -165,6 +166,7 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
 
     ucp_worker_fence(ctx->ucp_worker);
     ucc_tl_dpu_init_put(ctx, task, team);
+    assert(task->status == UCC_TL_DPU_TASK_STATUS_POSTED);
     
     req_param = &task->task_reqs.req_param;
     req_param->op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
@@ -191,7 +193,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
     ucc_tl_dpu_team_t *team = task->team;
     ucc_status_t status;
 
-    if (task->status == UCC_TL_DPU_TASK_STATUS_INIT && ctx->inflight == 0) {
+    if (task->status == UCC_TL_DPU_TASK_STATUS_INIT && ctx->inflight < 1) {
         ctx->inflight++;
         task->status = UCC_TL_DPU_TASK_STATUS_POSTED;
         tl_info(UCC_TL_TEAM_LIB(task->team), "Put to DPU coll task: %p", task);
@@ -239,10 +241,6 @@ ucc_status_t ucc_tl_dpu_allreduce_start(ucc_coll_task_t *coll_task)
  
     tl_info(UCC_TL_TEAM_LIB(task->team), "Allreduce start task %p", task);
 
-    if (UCC_IS_INPLACE(task->args)) {
-        task->args.dst.info.buffer = task->args.src.info.buffer;
-    }
-
     status = ucc_tl_dpu_allreduce_progress(coll_task);
     if (UCC_INPROGRESS == status) {
         ucc_progress_enqueue(UCC_TL_DPU_TEAM_CORE_CTX(team)->pq, coll_task);
@@ -267,6 +265,13 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
         tl_error(UCC_TL_TEAM_LIB(task->team),
                  "assymetric src/dst memory types are not supported yet");
         return UCC_ERR_NOT_SUPPORTED;
+    }
+
+    if (UCC_IS_INPLACE(task->args)) {
+        task->args.src.info.buffer   = task->args.dst.info.buffer;
+        task->args.dst.info.count    = task->args.src.info.count;
+        task->args.dst.info.datatype = task->args.src.info.datatype;
+        task->args.dst.info.mem_type = task->args.src.info.mem_type;
     }
 
     /* Set sync information for DPU */
@@ -307,10 +312,6 @@ ucc_status_t ucc_tl_dpu_alltoall_start(ucc_coll_task_t *coll_task)
  
     tl_info(UCC_TL_TEAM_LIB(task->team), "Alltoall start task %p", task);
 
-    if (UCC_IS_INPLACE(task->args)) {
-        task->args.dst.info.buffer = task->args.src.info.buffer;
-    }
-
     status = ucc_tl_dpu_alltoall_progress(coll_task);
     if (UCC_INPROGRESS == status) {
         ucc_progress_enqueue(UCC_TL_DPU_TEAM_CORE_CTX(team)->pq, coll_task);
@@ -330,6 +331,10 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
         tl_error(UCC_TL_TEAM_LIB(task->team),
                  "assymetric src/dst memory types are not supported yet");
         return UCC_ERR_NOT_SUPPORTED;
+    }
+
+    if (UCC_IS_INPLACE(task->args)) {
+        task->args.src.info.buffer = task->args.dst.info.buffer;
     }
 
     /* Set sync information for DPU */
@@ -363,8 +368,10 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
         return UCC_OK;
     }
 
+    assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
     ucc_tl_dpu_finalize_rkeys(task);
     ucc_mpool_put(task);
+    task->status = UCC_TL_DPU_TASK_STATUS_FINALIZED;
     return UCC_OK;
 }
 
