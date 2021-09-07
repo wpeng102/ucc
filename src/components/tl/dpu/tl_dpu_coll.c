@@ -183,7 +183,7 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
         return UCC_ERR_NO_MESSAGE;
     }
  
-    ucp_worker_fence(ctx->ucp_worker);
+    ucp_worker_flush(ctx->ucp_worker);
     return UCC_OK;
 }
 
@@ -228,7 +228,7 @@ ucc_status_t ucc_tl_dpu_allreduce_progress(ucc_coll_task_t *coll_task)
     ucc_status_t            status;
 
     status = ucc_tl_dpu_check_progress(task, ctx);
-    task->super.super.status = status;
+    coll_task->super.status = status;
 
     return status;
 }
@@ -238,9 +238,10 @@ ucc_status_t ucc_tl_dpu_allreduce_start(ucc_coll_task_t *coll_task)
     ucc_tl_dpu_task_t    *task        = ucs_derived_of(coll_task, ucc_tl_dpu_task_t);
     ucc_tl_dpu_team_t    *team        = task->team;
     ucc_status_t         status;
- 
+
     tl_info(UCC_TL_TEAM_LIB(task->team), "Allreduce start task %p", task);
 
+    coll_task->super.status = UCC_INPROGRESS;
     status = ucc_tl_dpu_allreduce_progress(coll_task);
     if (UCC_INPROGRESS == status) {
         ucc_progress_enqueue(UCC_TL_DPU_TEAM_CORE_CTX(team)->pq, coll_task);
@@ -280,8 +281,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     task->put_sync.count_total       = coll_args->src.info.count;
     task->put_sync.op                = coll_args->reduce.predefined_op;
     task->put_sync.coll_type         = coll_args->coll_type;
-    task->get_sync.coll_id           = 0;
-    task->get_sync.count_serviced    = 0;
+
     ucc_tl_dpu_init_rkeys(task);
 
     task->super.post     = ucc_tl_dpu_allreduce_start;
@@ -299,7 +299,7 @@ ucc_status_t ucc_tl_dpu_alltoall_progress(ucc_coll_task_t *coll_task)
     ucc_status_t            status;
 
     status = ucc_tl_dpu_check_progress(task, ctx);
-    task->super.super.status = status;
+    coll_task->super.status = status;
 
     return status;
 }
@@ -342,8 +342,6 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
     task->put_sync.dtype             = coll_args->src.info.datatype;
     task->put_sync.count_total       = coll_args->src.info.count;
     task->put_sync.coll_type         = coll_args->coll_type;
-    task->get_sync.coll_id           = 0;
-    task->get_sync.count_serviced    = 0;
     ucc_tl_dpu_init_rkeys(task);
 
     memset(&task->task_reqs.req_param, 0, sizeof(ucp_request_param_t));
@@ -382,7 +380,7 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
     ucc_tl_dpu_team_t    *tl_team = ucc_derived_of(team, ucc_tl_dpu_team_t);
     ucc_tl_dpu_context_t *ctx     = UCC_TL_DPU_TEAM_CTX(tl_team);
     ucc_tl_dpu_task_t    *task    = ucc_mpool_get(&ctx->req_mp);
-    ucc_status_t          status  = UCC_OK;
+    ucc_status_t          status;
 
     ucc_coll_task_init(&task->super, &coll_args->args, team);
     tl_info(team->context->lib, "task %p initialized", task);
@@ -394,8 +392,10 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
     task->super.finalize             = ucc_tl_dpu_coll_finalize;
     task->super.triggered_post       = NULL;
     task->status                     = UCC_TL_DPU_TASK_STATUS_INIT;
-
+    
     tl_team->coll_id++;
+    tl_team->get_sync.coll_id           = 0;
+    tl_team->get_sync.count_serviced    = 0;
 
     switch (coll_args->args.coll_type) {
     case UCC_COLL_TYPE_ALLREDUCE:
