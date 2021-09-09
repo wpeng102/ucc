@@ -48,9 +48,13 @@ ucc_status_t ucc_mpi_create_team_nb(dpu_ucc_comm_t *comm)
     ucc_team_params_t team_params = {
         .mask   = UCC_TEAM_PARAM_FIELD_EP |
                   UCC_TEAM_PARAM_FIELD_EP_RANGE |
+                  UCC_TEAM_PARAM_FIELD_ORDERING |
+                  UCC_TEAM_PARAM_FIELD_SYNC_TYPE |
                   UCC_TEAM_PARAM_FIELD_OOB,
         .ep     = comm->g->rank,
         .ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG,
+        .ordering = UCC_COLLECTIVE_POST_ORDERED,
+        .sync_type = UCC_SYNC_COLLECTIVES,
         .oob   = {
             .allgather      = oob_allgather,
             .req_test       = oob_allgather_test,

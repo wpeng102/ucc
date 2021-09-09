@@ -92,7 +92,6 @@ static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, 
         },
     };
 
-    CTX_LOG("### B4 AR %d\n", *((int*)src_buf+1));
     UCC_CHECK(ucc_collective_init(&coll, request, ctx->comm.team));
     assert(*request != NULL);
 }
@@ -129,6 +128,7 @@ void dpu_waitfor_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync)
 {
     /* busy wait */
     while (!sync[ctx->idx].todo);
+    __sync_synchronize();
     assert(!sync[ctx->idx].done);
 }
 
@@ -153,14 +153,18 @@ void dpu_signal_comp_threads(thread_ctx_t *ctx, thread_sync_t *sync)
     int i;
     for (i = 0; i < ctx->nthreads; i++) {
         sync[i].done = 0;
+    }
+    __sync_synchronize();
+    for (i = 0; i < ctx->nthreads; i++) {
         sync[i].todo = 1;
     }
 }
 
 void dpu_wait_for_next_coll(thread_ctx_t *ctx)
 {
+    CTX_LOG("Waiting for host to initiate coll id: %u\n", ctx->coll_sync.coll_id);
     dpu_hc_wait(ctx->hc, ctx->coll_sync.coll_id);
-    __sync_synchronize();
+    
     memcpy(&tmp_sync, (dpu_put_sync_t*)ctx->hc->mem_segs.sync.base, sizeof(tmp_sync));
     __sync_synchronize();
 }
@@ -191,7 +195,7 @@ void dpu_comm_worker(void *arg)
         ucc_coll_type_t coll_type   = lsync->coll_type;
         size_t          count_total = lsync->count_total;
         CTX_LOG(
-            "Start coll id: %d, type: %d, count total: %lu\n",
+            "Start coll id: %u, type: %d, count total: %lu\n",
             coll_id, coll_type, count_total);
 
         dpu_signal_comp_threads(ctx, thread_main_sync);
@@ -208,10 +212,10 @@ void dpu_comm_worker(void *arg)
             dpu_hc_progress(ctx->hc, lsync, ctx);
         }
 
-        CTX_LOG("Waiting for worker threads to complete coll id: %d, type: %d\n", coll_id, coll_type);
+        CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n", coll_id, coll_type);
         dpu_waitfor_comp_threads(ctx, thread_main_sync);
         dpu_mark_coll_done(ctx, lsync);
-        CTX_LOG("End coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
+        CTX_LOG("End coll id: %u, type: %d, count total: %lu, count serviced: %zu\n",
                 coll_id, coll_type, count_total, (size_t)ctx->coll_sync.count_serviced);
     }
 }
@@ -231,7 +235,6 @@ void *dpu_worker(void *arg)
         ctx->buf_idx = 0;
 
         dpu_waitfor_comm_thread(ctx, thread_main_sync);
-        __sync_synchronize();
 
         unsigned int coll_id      = lsync->coll_id;
         ucc_coll_type_t coll_type = lsync->coll_type;
@@ -247,7 +250,6 @@ void *dpu_worker(void *arg)
         /* Process all data */
         do {
             dpu_waitfor_comm_thread(ctx, thread_sub_sync);
-            __sync_synchronize();
 
             if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
                 dpu_coll_init_allreduce(ctx, &request, &count_serviced, lsync);
@@ -261,18 +263,17 @@ void *dpu_worker(void *arg)
             }
 
             if (request != NULL) {
+                CTX_LOG("Posting coll id: %d\n", coll_id);
                 UCC_CHECK(ucc_collective_post(request));
                 while (UCC_OK != ucc_collective_test(request)) {
                     ucc_context_progress(ctx->comm.ctx);
                 }
+                CTX_LOG("Finalizing coll id: %d\n", coll_id);
                 UCC_CHECK(ucc_collective_finalize(request));
             }
 
-            void *dst_buf = ctx->hc->pipeline.stage[ctx->buf_idx].put.buf;
-            CTX_LOG("### After AR %d\n", *((int*)dst_buf+1));
             ctx->buf_idx = (ctx->buf_idx + 1) % ctx->hc->pipeline.num_buffers;
             ctx->coll_sync.count_serviced += count_serviced;
-            __sync_synchronize();
 
             CTX_LOG("Progressed coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
                 coll_id, coll_type, count_total, (size_t)ctx->coll_sync.count_serviced);

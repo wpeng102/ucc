@@ -24,7 +24,8 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
     int tc_poll = UCC_TL_DPU_TC_POLL, i;
     size_t total_rkey_size = 0;
     
-    self->coll_id   = 0;
+    self->coll_id_issued   = 0;
+    self->coll_id_completed   = 0;
     self->size      = params->params.oob.participants;
     self->rank      = params->rank;
     self->status    = UCC_OPERATION_INITIALIZED;
@@ -220,7 +221,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
     ucc_tl_dpu_request_t        *hangup_req;
     ucp_request_param_t         req_param;
  
-    hangup.coll_id      = ++team->coll_id;
+    hangup.coll_id      = ++team->coll_id_issued;
     hangup.coll_type    = UCC_COLL_TYPE_LAST;
     hangup.dtype        = UCC_DT_USERDEFINED;
     hangup.op           = UCC_OP_USERDEFINED;
