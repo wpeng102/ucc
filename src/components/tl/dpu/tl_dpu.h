@@ -125,7 +125,8 @@ typedef struct ucc_tl_dpu_team {
     ucc_status_t          status;
     ucc_rank_t            size;
     ucc_rank_t            rank;
-    uint32_t              coll_id;
+    uint32_t              coll_id_issued;
+    uint32_t              coll_id_completed;
     ucc_tl_dpu_get_sync_t get_sync;
     ucp_mem_h             get_sync_memh;
     uint64_t              rem_ctrl_seg;
