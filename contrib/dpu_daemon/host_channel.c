@@ -156,6 +156,14 @@ static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
             status, ucs_status_string(status));
 }
 
+static void _empty_cb(void* request, ucs_status_t status) {}
+
+static ucs_status_t _dpu_worker_flush(dpu_hc_t *hc)
+{
+    ucs_status_ptr_t *request = ucp_worker_flush_nb(hc->ucp_worker, 0, _empty_cb);
+    return _dpu_request_wait(hc->ucp_worker, request);
+}
+
 static int _dpu_ucx_init(dpu_hc_t *hc)
 {
     ucp_params_t ucp_params;
@@ -219,9 +227,14 @@ static int _dpu_hc_buffer_alloc(dpu_hc_t *hc, dpu_mem_t *mem, size_t size)
     int ret = UCC_OK;
 
     memset(mem, 0, sizeof(*mem));
-    mem->base = calloc(size, sizeof(char));
-    memset(&mem_params, 0, sizeof(ucp_mem_map_params_t));
+    mem->base = calloc(size, 1);
+    if (mem->base == NULL) {
+        fprintf(stderr, "failed to allocate %lu bytes base %p\n", size, mem->base);
+        ret = UCC_ERR_NO_MEMORY;
+        goto out;
+    }
 
+    memset(&mem_params, 0, sizeof(ucp_mem_map_params_t));
     mem_params.address = mem->base;
     mem_params.length = size;
 
@@ -233,7 +246,7 @@ static int _dpu_hc_buffer_alloc(dpu_hc_t *hc, dpu_mem_t *mem, size_t size)
     if (status != UCS_OK) {
         fprintf(stderr, "failed to ucp_mem_map (%s)\n", ucs_status_string(status));
         ret = UCC_ERR_NO_MESSAGE;
-        goto out;
+        goto err_calloc;
     }
 
     mem_attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS |
@@ -273,15 +286,46 @@ static int _dpu_hc_buffer_free(dpu_hc_t *hc, dpu_mem_t *mem)
     free(mem->base);
 }
 
+static void _dpu_hc_reset_stage(dpu_stage_t *stage)
+{
+    stage->get.count = 0;
+    stage->put.count = 0;
+    stage->ar.count  = 0;
+    stage->get.state = FREE;
+    stage->put.state = FREE;
+    stage->ar.state  = FREE;
+    stage->get.ucp_req = NULL;
+    stage->put.ucp_req = NULL;
+}
+
+static void _dpu_hc_reset_pipeline(dpu_hc_t *hc)
+{
+    int i;
+    dpu_pipeline_t *pipe = &hc->pipeline;
+    pipe->count_get.done   = 0;
+    pipe->count_get.issued = 0;
+    pipe->count_put.done   = 0;
+    pipe->count_put.issued = 0;
+    pipe->count_red.done   = 0;
+    pipe->count_red.issued = 0;
+    pipe->idx.get = 0;
+    pipe->idx.put = 0;
+    pipe->idx.ar  = 0;
+    pipe->inflight.get = 0;
+    pipe->inflight.put = 0;
+    pipe->inflight.ar  = 0;
+    for (i=0; i<pipe->num_buffers; i++) {
+        _dpu_hc_reset_stage(&pipe->stage[i]);
+    }
+}
+
 static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
 {
     int i, ret;
 
-    memset(&hc->pipeline, 0, sizeof(hc->pipeline));
-
-    hc->pipeline.buffer_size = atol(getenv("UCC_TL_DPU_PIPELINE_BLOCK_SIZE"));
-    hc->pipeline.num_buffers = atoi(getenv("UCC_TL_DPU_PIPELINE_BUFFERS"));
     fprintf(stderr, "buffer_size: %lu, num_buffers: %lu\n", hc->pipeline.buffer_size, hc->pipeline.num_buffers);
+    assert(hc->pipeline.buffer_size > 0);
+    assert(hc->pipeline.num_buffers > 0);
 
     ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.in, hc->pipeline.buffer_size * hc->pipeline.num_buffers);
     if (ret) {
@@ -559,12 +603,21 @@ int dpu_hc_accept(dpu_hc_t *hc)
         goto err;
     }
 
-    /*ret = recv(hc->connfd, &hc->pipeline, sizeof(hc->pipeline), MSG_WAITALL);
+    memset(&hc->pipeline, 0, sizeof(hc->pipeline));
+
+    ret = recv(hc->connfd, &hc->pipeline.buffer_size, sizeof(size_t), MSG_WAITALL);
     if (-1 == ret) {
-        fprintf(stderr, "recv pipeline info failed!\n");
+        fprintf(stderr, "recv pipeline buffer size failed!\n");
         ret = UCC_ERR_NO_MESSAGE;
         goto err;
-    }*/
+    }
+
+    ret = recv(hc->connfd, &hc->pipeline.num_buffers, sizeof(size_t), MSG_WAITALL);
+    if (-1 == ret) {
+        fprintf(stderr, "recv pipeline num buffers failed!\n");
+        ret = UCC_ERR_NO_MESSAGE;
+        goto err;
+    }
 
     ret = _dpu_hc_init_pipeline(hc);
     if (ret) {
@@ -602,47 +655,6 @@ int dpu_hc_wait(dpu_hc_t *hc, unsigned int next_coll_id)
     status = ucp_ep_rkey_unpack(hc->host_ep, (void*)rkeys->dst_rkey_buf, &hc->dst_rkey);
 
     return 0;
-}
-
-static void _dpu_hc_reset_stage(dpu_stage_t *stage)
-{
-    stage->get.count = 0;
-    stage->put.count = 0;
-    stage->ar.count  = 0;
-    stage->get.state = FREE;
-    stage->put.state = FREE;
-    stage->ar.state  = FREE;
-    stage->get.ucp_req = NULL;
-    stage->put.ucp_req = NULL;
-}
-
-static void _dpu_hc_reset_pipeline(dpu_hc_t *hc)
-{
-    int i;
-    dpu_pipeline_t *pipe = &hc->pipeline;
-    pipe->count_get.done   = 0;
-    pipe->count_get.issued = 0;
-    pipe->count_put.done   = 0;
-    pipe->count_put.issued = 0;
-    pipe->count_red.done   = 0;
-    pipe->count_red.issued = 0;
-    pipe->idx.get = 0;
-    pipe->idx.put = 0;
-    pipe->idx.ar  = 0;
-    pipe->inflight.get = 0;
-    pipe->inflight.put = 0;
-    pipe->inflight.ar  = 0;
-    for (i=0; i<pipe->num_buffers; i++) {
-        _dpu_hc_reset_stage(&pipe->stage[i]);
-    }
-}
-
-static void _empty_cb(void* request, ucs_status_t status) {}
-
-static ucs_status_t _dpu_worker_flush(dpu_hc_t *hc)
-{
-    ucs_status_ptr_t *request = ucp_worker_flush_nb(hc->ucp_worker, 0, _empty_cb);
-    return _dpu_request_wait(hc->ucp_worker, request);
 }
 
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
