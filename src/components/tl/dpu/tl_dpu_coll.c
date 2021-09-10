@@ -12,50 +12,22 @@
 #include "utils/ucc_math.h"
 #include "utils/ucc_coll_utils.h"
 
-void ucc_tl_dpu_send_handler_nbx(void *request, ucs_status_t status,
-                                 void *user_data)
+ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t request, ucp_worker_h worker)
 {
-    ucc_tl_dpu_request_t *req = (ucc_tl_dpu_request_t *)request;
-    req->status = UCC_TL_DPU_UCP_REQUEST_DONE;
-}
-
-void ucc_tl_dpu_recv_handler_nbx(void *request, ucs_status_t status,
-                      const ucp_tag_recv_info_t *tag_info,
-                      void *user_data)
-{
-  ucc_tl_dpu_request_t *req = (ucc_tl_dpu_request_t *)request;
-  req->status = UCC_TL_DPU_UCP_REQUEST_DONE;
-}
-
-void ucc_tl_dpu_req_init(void* request)
-{
-    ucc_tl_dpu_request_t *req = (ucc_tl_dpu_request_t *)request;
-    req->status = UCC_TL_DPU_UCP_REQUEST_ACTIVE;
-}
-
-void ucc_tl_dpu_req_cleanup(void* request){ 
-    return;
-}
-
-ucc_status_t ucc_tl_dpu_req_test(ucc_tl_dpu_request_t **req,
-                                 ucp_worker_h worker) {
-    if (*req == NULL) {
-        return UCC_OK;
+    if (request == NULL) {
+        return UCS_OK;
     }
-
-    if ((*req)->status == UCC_TL_DPU_UCP_REQUEST_DONE) {
-        (*req)->status = UCC_TL_DPU_UCP_REQUEST_ACTIVE;
-        ucp_request_free(*req);
-        (*req) = NULL;
-        return UCC_OK;
+    else if (UCS_PTR_IS_ERR(request)) {
+        fprintf (stderr, "unable to complete UCX request\n");
+        return UCS_PTR_STATUS(request);
     }
-    ucp_worker_progress(worker);
-    return UCC_INPROGRESS;
+    else {
+        return ucp_request_check_status(request);
+    }
 }
 
-inline
 ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team,
-                                      ucc_tl_dpu_request_t *req) {
+                                      ucs_status_ptr_t req) {
     if (UCS_PTR_IS_ERR(req)) {
         tl_error(team->super.super.context->lib,
                  "failed to send/recv msg");
@@ -162,30 +134,23 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     ucc_tl_dpu_context_t *ctx, ucc_tl_dpu_team_t *team)
 {
     ucc_tl_dpu_put_request_t *put_req = &task->task_reqs.put_req;
-    ucp_request_param_t *req_param;
+    ucp_request_param_t req_param = {0};
 
-    ucp_worker_fence(ctx->ucp_worker);
     ucc_tl_dpu_init_put(ctx, task, team);
     assert(task->status == UCC_TL_DPU_TASK_STATUS_POSTED);
-    
-    req_param = &task->task_reqs.req_param;
-    req_param->op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                              UCP_OP_ATTR_FIELD_DATATYPE;
-    req_param->datatype     = ucp_dt_make_contig(1);
-    req_param->cb.send      = ucc_tl_dpu_send_handler_nbx;
-    req_param->cb.recv      = ucc_tl_dpu_recv_handler_nbx;
 
+    ucp_worker_fence(ctx->ucp_worker);
     put_req->sync_req =
         ucp_put_nbx(ctx->ucp_ep, &task->put_sync, sizeof(task->put_sync),
                     team->rem_ctrl_seg, team->rem_ctrl_seg_key,
-                    req_param);
+                    &req_param);
     if (ucc_tl_dpu_req_check(team, put_req->sync_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
     }
     tl_info(UCC_TL_TEAM_LIB(task->team), "Sent task to DPU: %p, coll type %d id %d count %u",
             task, task->put_sync.coll_type, task->put_sync.coll_id, task->put_sync.count_total);
  
-    //ucp_worker_flush(ctx->ucp_worker);
+    ucp_worker_flush(ctx->ucp_worker);
     return UCC_OK;
 }
 
@@ -349,7 +314,6 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
     task->put_sync.coll_type         = coll_args->coll_type;
     ucc_tl_dpu_init_rkeys(task);
 
-    memset(&task->task_reqs.req_param, 0, sizeof(ucp_request_param_t));
     task->super.post     = ucc_tl_dpu_alltoall_start;
     task->super.progress = ucc_tl_dpu_alltoall_progress;
 
@@ -374,9 +338,9 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
     assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
     assert(task->get_sync.coll_id == task->put_sync.coll_id);
     assert(task->get_sync.count_serviced == task->put_sync.count_total);
+    task->status = UCC_TL_DPU_TASK_STATUS_FINALIZED;
     ucc_tl_dpu_finalize_rkeys(task);
     ucc_mpool_put(task);
-    task->status = UCC_TL_DPU_TASK_STATUS_FINALIZED;
     return UCC_OK;
 }
 
