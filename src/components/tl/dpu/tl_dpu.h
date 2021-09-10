@@ -57,6 +57,8 @@ typedef struct ucc_tl_dpu_context_config {
     uint32_t                server_port;
     char                    *server_hname;
     char                    *host_dpu_list;
+    size_t                  pipeline_buffer_size;
+    size_t                  pipeline_num_buffers;
 } ucc_tl_dpu_context_config_t;
 
 typedef struct ucc_tl_dpu_lib {

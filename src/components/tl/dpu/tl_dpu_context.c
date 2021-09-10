@@ -184,6 +184,18 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
         ucc_status = UCC_ERR_NO_MESSAGE;
         goto err;
     }
+    ret = send(sockfd, &tl_dpu_config->pipeline_buffer_size, sizeof(size_t), 0);
+    if (ret < 0) {
+        tl_error(self->super.super.lib, "send pipeline size failed");
+        ucc_status = UCC_ERR_NO_MESSAGE;
+        goto err;
+    }
+    ret = send(sockfd, &tl_dpu_config->pipeline_num_buffers, sizeof(size_t), 0);
+    if (ret < 0) {
+        tl_error(self->super.super.lib, "send pipeline num buffers failed");
+        ucc_status = UCC_ERR_NO_MESSAGE;
+        goto err;
+    }
     ret = recv(sockfd, &rem_worker_addr_size, sizeof(rem_worker_addr_size), MSG_WAITALL);
     if (ret < 0) {
         tl_error(self->super.super.lib, "recv address length failed");
