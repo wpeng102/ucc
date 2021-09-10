@@ -28,15 +28,6 @@
 #define MAX_RKEY_LEN      256
 
 typedef enum {
-    UCC_TL_DPU_UCP_REQUEST_ACTIVE,
-    UCC_TL_DPU_UCP_REQUEST_DONE,
-} ucc_tl_dpu_request_status_t;
-
-typedef struct ucc_tl_dpu_request {
-  ucc_tl_dpu_request_status_t status;
-} ucc_tl_dpu_request_t;
-
-typedef enum {
     UCC_TL_DPU_TASK_STATUS_INIT,
     UCC_TL_DPU_TASK_STATUS_POSTED,
     UCC_TL_DPU_TASK_STATUS_DONE,
@@ -104,14 +95,10 @@ typedef struct ucc_tl_dpu_get_sync_t {
 } ucc_tl_dpu_get_sync_t;
 
 typedef struct ucc_tl_dpu_put_request {
-    ucc_tl_dpu_request_t *data_req;
-    ucc_tl_dpu_request_t *sync_req;
+    ucs_status_ptr_t data_req;
+    ucs_status_ptr_t sync_req;
     ucc_tl_dpu_put_sync_t sync_data;
 } ucc_tl_dpu_put_request_t;
-
-typedef struct ucc_tl_dpu_get_request {
-    ucc_tl_dpu_request_t *data_req;
-} ucc_tl_dpu_get_request_t;
 
 typedef struct ucc_tl_dpu_connect_s {
     ucp_mem_map_params_t    mmap_params;
@@ -137,15 +124,14 @@ typedef struct ucc_tl_dpu_team {
     ucp_rkey_h            rem_data_in_key;
     uint64_t              *rem_data_out;
     ucp_rkey_h            rem_data_out_key;
-    ucc_tl_dpu_request_t  *send_req[3];
-    ucc_tl_dpu_request_t  *recv_req[2];
+    ucs_status_ptr_t      send_req[3];
+    ucs_status_ptr_t      recv_req[2];
     ucc_tl_dpu_conn_buf_t *conn_buf;
 } ucc_tl_dpu_team_t;
 UCC_CLASS_DECLARE(ucc_tl_dpu_team_t, ucc_base_context_t *,
                   const ucc_base_team_params_t *);
 
 typedef struct ucc_tl_dpu_task_req_t {
-    ucp_request_param_t      req_param;
     ucc_tl_dpu_put_request_t put_req;
 } ucc_tl_dpu_task_req_t;
 
@@ -188,16 +174,7 @@ typedef struct ucc_tl_dpu {
 #define UCC_TL_DPU_TEAM_CORE_CTX(_team)                                     \
     ((_team)->super.super.context->ucc_context)
 
-void ucc_tl_dpu_req_init(void *request);
-void ucc_tl_dpu_req_cleanup(void * request);
-
-ucc_status_t ucc_tl_dpu_req_test(ucc_tl_dpu_request_t **req, ucp_worker_h worker);
-ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team,
-                                      ucc_tl_dpu_request_t *req);
-
-void ucc_tl_dpu_send_handler_nbx(void *request, ucs_status_t status, void *user_data);
-void ucc_tl_dpu_recv_handler_nbx(void *request, ucs_status_t status,
-                      const ucp_tag_recv_info_t *tag_info,
-                      void *user_data);
+ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t req, ucp_worker_h worker);
+ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team, ucs_status_ptr_t req);
 
 #endif

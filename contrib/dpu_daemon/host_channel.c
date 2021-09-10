@@ -664,8 +664,9 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
     // memset(lsync, 0, sizeof(dpu_put_sync_t));
     _dpu_hc_reset_pipeline(hc);
 
-    _dpu_worker_flush(hc);
+    //_dpu_worker_flush(hc);
     assert(hc->pipeline.sync_req == NULL);
+    ucp_worker_fence(hc->ucp_worker);
     DPU_LOG("Notify host completed coll_id: %d, serviced: %lu\n", coll_sync->coll_id, coll_sync->count_serviced);
     hc->pipeline.sync_req = ucp_put_nbx(hc->host_ep, coll_sync, sizeof(dpu_get_sync_t),
                           hc->sync_addr, hc->sync_rkey,
@@ -676,7 +677,7 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
         fprintf(stderr, "failed to notify host of completion (%s)\n", ucs_status_string(status));
         return -1;
     }
-    _dpu_worker_flush(hc);
+    //_dpu_worker_flush(hc);
     
     return 0;
 }
@@ -798,7 +799,6 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
 
     for (i=0; i<10; i++) {
         if (ucp_worker_progress(hc->ucp_worker)) {
-            DPU_LOG("Progress! %d\n", i);
             break;
         }
     }
@@ -820,7 +820,6 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
                 DPU_LOG("Finished Get idx %d count %lu done %zu\n",
                         i, stage->get.count, hc->pipeline.count_get.done);
 
-                _dpu_worker_flush(hc);
                 stage->get.state = DONE;
                 hc->pipeline.count_get.done += stage->get.count;
                 hc->pipeline.inflight.get--;
