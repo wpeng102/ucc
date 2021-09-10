@@ -136,15 +136,9 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     sockfd = _server_connect(self, hname, tl_dpu_config->server_port);
 
     memset(&ucp_params, 0, sizeof(ucp_params));
-    ucp_params.field_mask      = UCP_PARAM_FIELD_FEATURES |
-                                 UCP_PARAM_FIELD_REQUEST_SIZE |
-                                 UCP_PARAM_FIELD_REQUEST_INIT |
-                                 UCP_PARAM_FIELD_REQUEST_CLEANUP;
+    ucp_params.field_mask      = UCP_PARAM_FIELD_FEATURES;
     ucp_params.features        = UCP_FEATURE_TAG |
                                  UCP_FEATURE_RMA;
-    ucp_params.request_size    = sizeof(ucc_tl_dpu_request_t);
-    ucp_params.request_init    = ucc_tl_dpu_req_init;
-    ucp_params.request_cleanup = ucc_tl_dpu_req_cleanup;
 
     ucc_status = ucs_status_to_ucc_status(
                     ucp_init(&ucp_params, NULL, &ucp_context));
