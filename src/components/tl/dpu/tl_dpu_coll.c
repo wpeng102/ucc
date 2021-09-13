@@ -36,6 +36,30 @@ ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team,
     return UCC_OK;
 }
 
+ucc_status_t ucc_tl_dpu_req_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request)
+{
+    ucs_status_t status;
+
+    /* immediate completion */
+    if (request == NULL) {
+        return UCC_OK;
+    }
+    else if (UCS_PTR_IS_ERR(request)) {
+        status = ucp_request_check_status(request);
+        fprintf (stderr, "unable to complete UCX request (%s)\n", ucs_status_string(status));
+        return UCS_PTR_STATUS(request);
+    }
+    else {
+        do {
+            ucp_worker_progress(ucp_worker);
+            status = ucp_request_check_status(request);
+        } while (status == UCS_INPROGRESS);
+        ucp_request_free(request);
+    }
+
+    return UCC_OK;
+}
+
 static ucs_status_t ucc_tl_dpu_register_buf(
     ucp_context_h ucp_ctx,
     void *base, size_t size,
@@ -150,13 +174,15 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     tl_info(UCC_TL_TEAM_LIB(task->team), "Sent task to DPU: %p, coll type %d id %d count %u",
             task, task->put_sync.coll_type, task->put_sync.coll_id, task->put_sync.count_total);
  
-    ucp_worker_flush(ctx->ucp_worker);
+    // ucp_worker_flush(ctx->ucp_worker);
+    ucc_tl_dpu_req_wait(ctx->ucp_worker, put_req->sync_req);
     return UCC_OK;
 }
 
 static ucc_status_t ucc_tl_dpu_check_progress(
     ucc_tl_dpu_task_t *task, ucc_tl_dpu_context_t *ctx)
 {
+    //int i;
     ucc_tl_dpu_team_t *team = task->team;
     ucc_status_t status;
 
@@ -165,11 +191,16 @@ static ucc_status_t ucc_tl_dpu_check_progress(
         tl_info(UCC_TL_TEAM_LIB(task->team), "Put to DPU coll task: %p, coll id %d", task, task->put_sync.coll_id);
         status = ucc_tl_dpu_issue_put(task, ctx, team);
         if (UCC_OK != status) {
-            return UCC_ERR_NO_MESSAGE;
+            return UCC_INPROGRESS;
         }
     }
 
     ucp_worker_progress(ctx->ucp_worker);
+    /*for (i=0; i<10; i++) {
+        if (ucp_worker_progress(ctx->ucp_worker)) {
+            break;
+        }
+    }*/
 
     if (task->status == UCC_TL_DPU_TASK_STATUS_POSTED) {
         if (team->get_sync.coll_id < task->put_sync.coll_id ||

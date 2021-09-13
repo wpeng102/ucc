@@ -143,7 +143,7 @@ typedef struct dpu_pipeline_t {
 
     size_t              buffer_size;
     size_t              num_buffers;
-    ucs_status_ptr_t   *sync_req;
+    ucs_status_ptr_t    sync_req;
 
     count_t count_get;
     count_t count_red;
