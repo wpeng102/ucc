@@ -117,27 +117,27 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
                           self->conn_buf->rem_rkeys_lengths[1] +
                           self->conn_buf->rem_rkeys_lengths[2];
     self->conn_buf->rem_rkeys = ucc_malloc(total_rkey_size, "rem_rkeys alloc");
-    self->recv_req[0]   = ucp_tag_recv_nbx(ctx->ucp_worker,
+    self->recv_req[1]   = ucp_tag_recv_nbx(ctx->ucp_worker,
                                     &self->conn_buf->rem_addresses,
                                     sizeof(self->conn_buf->rem_addresses),
                                     UCC_TL_DPU_EXCHANGE_ADDR_TAG, (uint64_t)-1,
                                     &req_param);
-    if (ucc_tl_dpu_req_check(self, self->recv_req[0]) != UCC_OK) {
+    if (ucc_tl_dpu_req_check(self, self->recv_req[1]) != UCC_OK) {
         goto err;
     }
 
-    self->recv_req[1] = ucp_tag_recv_nbx(ctx->ucp_worker, self->conn_buf->rem_rkeys,
+    self->recv_req[2] = ucp_tag_recv_nbx(ctx->ucp_worker, self->conn_buf->rem_rkeys,
                                 total_rkey_size,
                                 UCC_TL_DPU_EXCHANGE_RKEY_TAG, (uint64_t)-1,
                                 &req_param);
-    if (ucc_tl_dpu_req_check(self, self->recv_req[1]) != UCC_OK) {
+    if (ucc_tl_dpu_req_check(self, self->recv_req[2]) != UCC_OK) {
         goto err;
     }
 
     for (i = 0; i < tc_poll; i++) {
         ucp_worker_progress(ctx->ucp_worker);
-        if ((ucc_tl_dpu_req_test(self->recv_req[0], ctx->ucp_worker) == UCC_OK) &&
-            (ucc_tl_dpu_req_test(self->recv_req[1], ctx->ucp_worker) == UCC_OK))
+        if ((ucc_tl_dpu_req_test(self->recv_req[1], ctx->ucp_worker) == UCC_OK) &&
+            (ucc_tl_dpu_req_test(self->recv_req[2], ctx->ucp_worker) == UCC_OK))
         {
             self->status = UCC_OK;
             break;
@@ -180,11 +180,15 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
     self->conn_buf->rem_rkeys = NULL;
     ucc_free(self->conn_buf);
 
-    ucp_request_free(self->send_req[0]);
-    ucp_request_free(self->send_req[1]);
-    ucp_request_free(self->send_req[2]);
-    ucp_request_free(self->recv_req[0]);
-    ucp_request_free(self->recv_req[1]);
+
+    for (i=0; i<3; i++) {
+        if (self->send_req[i]) {
+            ucp_request_free(self->send_req[i]);
+        }
+        if (self->recv_req[i]) {
+            ucp_request_free(self->recv_req[i]);
+        }
+    }
 
     return self->status;
 err:
@@ -213,7 +217,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
     ucc_tl_dpu_team_t           *team = ucc_derived_of(tl_team, ucc_tl_dpu_team_t);
     ucc_tl_dpu_context_t        *ctx = UCC_TL_DPU_TEAM_CTX(team);
     ucc_tl_dpu_put_sync_t       hangup;
-    ucs_status_ptr_t            *hangup_req;
+    ucs_status_ptr_t            hangup_req;
     ucp_request_param_t         req_param = {0};
  
     hangup.coll_id      = ++team->coll_id_issued;
@@ -368,11 +372,14 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
     team->conn_buf->rem_rkeys = NULL;
     ucc_free(team->conn_buf);
 
-    ucp_request_free(team->send_req[0]);
-    ucp_request_free(team->send_req[1]);
-    ucp_request_free(team->send_req[2]);
-    ucp_request_free(team->recv_req[0]);
-    ucp_request_free(team->recv_req[1]);
+    for (i=0; i<3; i++) {
+        if (team->send_req[i]) {
+            ucp_request_free(team->send_req[i]);
+        }
+        if (team->recv_req[i]) {
+            //ucp_request_free(team->recv_req[i]);
+        }
+    }
 
     return team->status;
 err:

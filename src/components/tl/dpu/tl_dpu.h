@@ -125,7 +125,7 @@ typedef struct ucc_tl_dpu_team {
     uint64_t              *rem_data_out;
     ucp_rkey_h            rem_data_out_key;
     ucs_status_ptr_t      send_req[3];
-    ucs_status_ptr_t      recv_req[2];
+    ucs_status_ptr_t      recv_req[3];
     ucc_tl_dpu_conn_buf_t *conn_buf;
 } ucc_tl_dpu_team_t;
 UCC_CLASS_DECLARE(ucc_tl_dpu_team_t, ucc_base_context_t *,
@@ -176,5 +176,6 @@ typedef struct ucc_tl_dpu {
 
 ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t req, ucp_worker_h worker);
 ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team, ucs_status_ptr_t req);
+ucc_status_t ucc_tl_dpu_req_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t req);
 
 #endif
