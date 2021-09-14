@@ -136,8 +136,8 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
 
     for (i = 0; i < tc_poll; i++) {
         ucp_worker_progress(ctx->ucp_worker);
-        if ((ucc_tl_dpu_req_test(self->recv_req[1], ctx->ucp_worker) == UCC_OK) &&
-            (ucc_tl_dpu_req_test(self->recv_req[2], ctx->ucp_worker) == UCC_OK))
+        if ((ucc_tl_dpu_req_test(&self->recv_req[1], ctx->ucp_worker) == UCC_OK) &&
+            (ucc_tl_dpu_req_test(&self->recv_req[2], ctx->ucp_worker) == UCC_OK))
         {
             self->status = UCC_OK;
             break;
@@ -232,7 +232,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
     if (ucc_tl_dpu_req_check(team, hangup_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
     }
-    while((ucc_tl_dpu_req_test(hangup_req, ctx->ucp_worker) != UCC_OK)) {
+    while((ucc_tl_dpu_req_test(&hangup_req, ctx->ucp_worker) != UCC_OK)) {
         ucp_worker_progress(ctx->ucp_worker);
     }
     tl_info(ctx->super.super.lib, "sent hangup to dpu team");
@@ -269,10 +269,10 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
     if (UCC_OPERATION_INITIALIZED == team->status) {
         for (i = 0; i < tc_poll; i++) {
             ucp_worker_progress(ctx->ucp_worker);
-            if ((ucc_tl_dpu_req_test(team->send_req[0], ctx->ucp_worker) == UCC_OK) &&
-                (ucc_tl_dpu_req_test(team->send_req[1], ctx->ucp_worker) == UCC_OK) &&
-                (ucc_tl_dpu_req_test(team->send_req[2], ctx->ucp_worker) == UCC_OK) &&
-                (ucc_tl_dpu_req_test(team->recv_req[0], ctx->ucp_worker) == UCC_OK))
+            if ((ucc_tl_dpu_req_test(&team->send_req[0], ctx->ucp_worker) == UCC_OK) &&
+                (ucc_tl_dpu_req_test(&team->send_req[1], ctx->ucp_worker) == UCC_OK) &&
+                (ucc_tl_dpu_req_test(&team->send_req[2], ctx->ucp_worker) == UCC_OK) &&
+                (ucc_tl_dpu_req_test(&team->recv_req[0], ctx->ucp_worker) == UCC_OK))
             {
                 team->status = UCC_INPROGRESS; /* Advance connection establishment */
                 break;
@@ -312,8 +312,8 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
 
         for (i = 0; i < tc_poll; i++) {
             ucp_worker_progress(ctx->ucp_worker);
-            if ((ucc_tl_dpu_req_test(team->recv_req[0], ctx->ucp_worker) == UCC_OK) &&
-                (ucc_tl_dpu_req_test(team->recv_req[1], ctx->ucp_worker) == UCC_OK))
+            if ((ucc_tl_dpu_req_test(&team->recv_req[0], ctx->ucp_worker) == UCC_OK) &&
+                (ucc_tl_dpu_req_test(&team->recv_req[1], ctx->ucp_worker) == UCC_OK))
             {
                 team->status = UCC_OK;
                 break;
@@ -327,8 +327,8 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
     if (UCC_INPROGRESS == team->status) {
         for (i = 0; i < tc_poll; i++) {
             ucp_worker_progress(ctx->ucp_worker);
-            if ((ucc_tl_dpu_req_test(team->recv_req[0], ctx->ucp_worker) == UCC_OK) &&
-                (ucc_tl_dpu_req_test(team->recv_req[1], ctx->ucp_worker) == UCC_OK))
+            if ((ucc_tl_dpu_req_test(&team->recv_req[0], ctx->ucp_worker) == UCC_OK) &&
+                (ucc_tl_dpu_req_test(&team->recv_req[1], ctx->ucp_worker) == UCC_OK))
             {
                 team->status = UCC_OK;
                 break;

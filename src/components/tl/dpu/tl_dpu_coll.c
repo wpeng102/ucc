@@ -12,18 +12,25 @@
 #include "utils/ucc_math.h"
 #include "utils/ucc_coll_utils.h"
 
-ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t request, ucp_worker_h worker)
+ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t *req_p, ucp_worker_h worker)
 {
+    ucs_status_t status;
+    ucs_status_ptr_t request = *req_p;
     if (request == NULL) {
-        return UCS_OK;
+        status = UCS_OK;
     }
     else if (UCS_PTR_IS_ERR(request)) {
         fprintf (stderr, "unable to complete UCX request\n");
-        return UCS_PTR_STATUS(request);
+        status = UCS_PTR_STATUS(request);
     }
     else {
-        return ucp_request_check_status(request);
+        status = ucp_request_check_status(request);
+        if (UCS_OK == status) {
+            ucp_request_free(request);
+            *req_p = NULL;
+        }
     }
+    return ucs_status_to_ucc_status(status);
 }
 
 ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team,
