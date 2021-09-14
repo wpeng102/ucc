@@ -25,7 +25,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
     
     self->coll_id_issued   = 0;
     self->coll_id_completed   = 0;
-    self->size      = params->params.oob.participants;
+    self->size      = params->params.oob.n_oob_eps;
     self->rank      = params->rank;
     self->status    = UCC_OPERATION_INITIALIZED;
     self->conn_buf  = ucc_malloc(sizeof(ucc_tl_dpu_conn_buf_t),

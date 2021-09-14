@@ -56,7 +56,8 @@ ucc_status_t ucc_mpi_create_team_nb(dpu_ucc_comm_t *comm)
             .req_test       = oob_allgather_test,
             .req_free       = oob_allgather_free,
             .coll_info      = (void*)MPI_COMM_WORLD,
-            .participants   = comm->g->size
+            .oob_ep         = comm->g->rank,
+            .n_oob_eps      = comm->g->size
         }
     };
 
@@ -125,8 +126,9 @@ int dpu_ucc_alloc_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
             .allgather    = oob_allgather,
             .req_test     = oob_allgather_test,
             .req_free     = oob_allgather_free,
-            .coll_info = (void*)MPI_COMM_WORLD,
-            .participants = g->size
+            .coll_info    = (void*)MPI_COMM_WORLD,
+            .oob_ep       = g->rank,
+            .n_oob_eps    = g->size
         },
     };
     ucc_context_config_h ctx_config;

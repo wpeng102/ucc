@@ -33,5 +33,6 @@ ucc_status_t ucc_tl_dpu_get_lib_attr(const ucc_base_lib_t *lib,
 
     attr->super.attr.thread_mode    = UCC_THREAD_MULTIPLE;
     attr->super.attr.coll_types     = UCC_TL_DPU_SUPPORTED_COLLS;
+    attr->super.flags               = 0;
     return UCC_OK;
 }
