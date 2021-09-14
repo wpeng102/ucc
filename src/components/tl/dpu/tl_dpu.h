@@ -174,7 +174,7 @@ typedef struct ucc_tl_dpu {
 #define UCC_TL_DPU_TEAM_CORE_CTX(_team)                                     \
     ((_team)->super.super.context->ucc_context)
 
-ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t req, ucp_worker_h worker);
+ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t *req_p, ucp_worker_h worker);
 ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team, ucs_status_ptr_t req);
 ucc_status_t ucc_tl_dpu_req_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t req);
 
