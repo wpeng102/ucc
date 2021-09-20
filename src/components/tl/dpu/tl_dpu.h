@@ -74,14 +74,18 @@ UCC_CLASS_DECLARE(ucc_tl_dpu_context_t, const ucc_base_context_params_t *,
 typedef struct ucc_tl_dpu_rkeys_t {
     char src_rkey[MAX_RKEY_LEN];
     char dst_rkey[MAX_RKEY_LEN];
+    char rank_list_rkey[MAX_RKEY_LEN];
     size_t src_rkey_len;
     size_t dst_rkey_len;
+    size_t rank_list_rkey_len;
     void *src_buf;
     void *dst_buf;
+    void *rank_list;
 } ucc_tl_dpu_put_rkeys_t;
 
 typedef struct ucc_tl_dpu_put_sync_t {
     ucc_tl_dpu_put_rkeys_t   rkeys;
+    uint16_t                 team_id;
     ucc_datatype_t           dtype;
     ucc_reduction_op_t       op;
     ucc_coll_type_t          coll_type;
@@ -177,5 +181,6 @@ typedef struct ucc_tl_dpu {
 ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t *req_p, ucp_worker_h worker);
 ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team, ucs_status_ptr_t req);
 ucc_status_t ucc_tl_dpu_req_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t req);
+ucs_status_t ucc_tl_dpu_register_buf( ucp_context_h ucp_ctx, void *base, size_t size, ucc_tl_dpu_rkey_t *rkey);
 
 #endif

@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <unistd.h>
 
+#include "../../src/utils/ucc_datastruct.h" 
 #include "server_ucc.h"
 #include "host_channel.h"
 #include "ucc/api/ucc.h"
@@ -92,7 +93,7 @@ static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, 
         },
     };
 
-    UCC_CHECK(ucc_collective_init(&coll, request, ctx->comm.team));
+    UCC_CHECK(ucc_collective_init(&coll, request, ctx->comm.team_pool[lsync->team_id]));
     assert(*request != NULL);
 }
 
@@ -177,46 +178,185 @@ void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 
 void dpu_comm_worker(void *arg)
 {
-    thread_ctx_t *ctx = (thread_ctx_t*)arg;
-    dpu_put_sync_t *lsync = &tmp_sync; //ctx->hc->mem_segs.sync.base;
-    assert(ctx->idx == -1);
-    dpu_thread_set_affinity(ctx);
+    thread_ctx_t *tctx_pool = (thread_ctx_t *)arg;
+    /* There is nthreads + 1 (main thread) in total. The last 
+     * thread context in the pool is the main thread and it is consider 
+     * the communication thread */
+    int nthreads = tctx_pool[0].nthreads;
+    thread_ctx_t *comm_thread_ctx = &tctx_pool[nthreads];
+
+    dpu_put_sync_t *lsync = &tmp_sync; //comm_thread_ctx->hc->mem_segs.sync.base;
+    assert(comm_thread_ctx->idx == -1);
+    dpu_thread_set_affinity(comm_thread_ctx);
+    ucc_status_t status;
     CTX_LOG("Started comm thread\n");
 
 
     while (1) {
-        ctx->coll_sync.coll_id++;
-        ctx->coll_sync.count_serviced = 0;
-        ctx->buf_idx = 0;
+        comm_thread_ctx->coll_sync.coll_id++;
+        comm_thread_ctx->coll_sync.count_serviced = 0;
+        comm_thread_ctx->buf_idx = 0;
 
-        dpu_wait_for_next_coll(ctx);
+        dpu_wait_for_next_coll(comm_thread_ctx);
 
         unsigned int    coll_id     = lsync->coll_id;
         ucc_coll_type_t coll_type   = lsync->coll_type;
         size_t          count_total = lsync->count_total;
+        uint16_t        team_id     = lsync->team_id;
+        assert(0 <= team_id && team_id < DPU_TEAM_POOL_SIZE);
         CTX_LOG(
             "Start coll id: %u, type: %d, count total: %lu\n",
             coll_id, coll_type, count_total);
 
-        dpu_signal_comp_threads(ctx, thread_main_sync);
+        dpu_signal_comp_threads(comm_thread_ctx, thread_main_sync);
         if (coll_type == UCC_COLL_TYPE_LAST) {
-            /* Hang up */
-            break;
+
+            if (coll_id == -1) {
+                /* signal is new comm create 
+                 * mirror host team in dpu world */
+
+                fprintf(stderr, "received team_mirroring_signal \n");
+                
+                /* 
+                 *
+                 * Steps: 
+                 *
+                 * 1. read the rank list in comm world 
+                 * 2. create a new team in the dpu world 
+                 * for each thread separately
+                 *
+                 */
+
+                /* Step 1 */
+
+
+                /*
+                 * TODO #1:
+                 *
+                 * 1. Create new_team for each thread (add a for loop) just like main()
+                 * 
+                 *
+                 *
+                 *
+                 * */
+                /*
+                 * TODO #2
+                 *
+                 *  Steps:
+                 *
+                 *  1. insert into threaed context  this new team to a list of
+                 *  teams that we created
+                 *  2. save this new_team inside the thread context for each thread
+                 *  3. use team_id to hash and find the new_team
+                 *  4. how to use new_team to call allredce? --> change the
+                 *  input of ucc_collective_init
+                 *
+                 *
+                 * */
+
+                int i = 0;
+                thread_ctx_t *ctx = &(tctx_pool[0]);
+                dpu_put_sync_t * team_mirroring_signal = lsync;
+                ucs_status_ptr_t status_ptr;
+                ucc_team_h new_team = NULL;
+                ucc_rank_t * rank_list =
+                        calloc(team_mirroring_signal->rkeys.rank_list_rkey_len, 1); 
+                ucp_request_param_t req_param = {0}; 
+
+                ucp_rkey_h rkey;
+                ucs_status_t rstatus;
+
+                rstatus = ucp_ep_rkey_unpack(ctx->hc->host_ep,
+                        (void*)team_mirroring_signal->rkeys.rank_list_rkey,
+                        &rkey);
+
+                if (rstatus != UCS_OK) {
+                    printf("ucp_ep_rkey_unpack failed: %d", rstatus);
+                    return;
+                }
+
+
+                status_ptr = ucp_get_nbx(ctx->hc->host_ep, rank_list,
+                        team_mirroring_signal->rkeys.rank_list_rkey_len,
+                        (uintptr_t)((uint64_t*)team_mirroring_signal->rkeys.rank_list),
+                        rkey,
+                        &req_param);
+
+                //while (_dpu_req_test(status_ptr) != UCS_OK) {
+                _dpu_request_wait(ctx->hc->ucp_worker, status_ptr);
+
+                if (status_ptr != NULL ) {
+                    ucp_request_free(status_ptr);
+                }
+                
+                fprintf(stderr, "got the rank list from host \n");
+
+                /* Now we have the rank list in comm world available  */
+
+                ucc_rank_t team_size =
+                    team_mirroring_signal->rkeys.rank_list_rkey_len/sizeof(ucc_rank_t);
+
+                ucc_rank_t full_size = ctx->comm.g->size;
+
+                ucc_team_params_t      team_params;
+
+                team_params.ep       = ctx->comm.g->rank;
+                team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
+                team_params.mask     = UCC_TEAM_PARAM_FIELD_EP |
+                                       UCC_TEAM_PARAM_FIELD_EP_RANGE |
+                                       UCC_TEAM_PARAM_FIELD_EP_MAP;
+
+                team_params.ep_map   = ucc_ep_map_from_array(&rank_list,
+                        team_size, full_size, 0);
+
+                for (i = 0; i < nthreads; i++) {
+                    /* Step 2 */
+                    ctx = &(tctx_pool[i]);
+                    new_team = NULL;
+
+                    if (UCC_OK != ucc_team_create_post(&ctx->comm.ctx, 1,
+                                                       &team_params, &new_team)) {
+                        /* TODO handle errors */
+                        printf("ucc_team_create_post failed \n");
+                        return;
+                    }
+
+                    while (UCC_INPROGRESS == (status = ucc_team_create_test(
+                                    new_team))) {
+                        ucc_context_progress(ctx->comm.ctx);
+                    }
+
+                    if (UCC_OK != status) {
+                        /* TODO handle errors */
+                        printf("ucc_team_create_test failed");
+                        return;
+                    }
+
+                    /* a new team has been created, insert it into the thread context */
+                    ctx->comm.team_pool[team_id] = new_team; 
+                }
+                
+                fprintf(stderr, "created all the new teams  \n");
+            } else {
+
+                /* Hang up */
+                break;
+            }
         }
 
-        dpu_pipeline_t *pipe = &ctx->hc->pipeline;
+        dpu_pipeline_t *pipe = &comm_thread_ctx->hc->pipeline;
         while (pipe->count_put.done < count_total) {
-            dpu_hc_issue_get(ctx->hc, lsync, ctx);
-            dpu_hc_issue_allreduce(ctx->hc, lsync, ctx);
-            dpu_hc_issue_put(ctx->hc, lsync, ctx);
-            dpu_hc_progress(ctx->hc, lsync, ctx);
+            dpu_hc_issue_get(comm_thread_ctx->hc, lsync, comm_thread_ctx);
+            dpu_hc_issue_allreduce(comm_thread_ctx->hc, lsync, comm_thread_ctx);
+            dpu_hc_issue_put(comm_thread_ctx->hc, lsync, comm_thread_ctx);
+            dpu_hc_progress(comm_thread_ctx->hc, lsync, comm_thread_ctx);
         }
 
         CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n", coll_id, coll_type);
-        dpu_waitfor_comp_threads(ctx, thread_main_sync);
-        dpu_mark_coll_done(ctx, lsync);
+        dpu_waitfor_comp_threads(comm_thread_ctx, thread_main_sync);
+        dpu_mark_coll_done(comm_thread_ctx, lsync);
         CTX_LOG("End coll id: %u, type: %d, count total: %lu, count serviced: %zu\n",
-                coll_id, coll_type, count_total, (size_t)ctx->coll_sync.count_serviced);
+                coll_id, coll_type, count_total, (size_t)comm_thread_ctx->coll_sync.count_serviced);
     }
 }
 
@@ -341,7 +481,8 @@ int main(int argc, char **argv)
     tctx_pool[i].idx      = -1;
     tctx_pool[i].nthreads = nthreads;
     tctx_pool[i].hc       = hc;
-    dpu_comm_worker((void*)&tctx_pool[i]);
+    //dpu_comm_worker((void*)&tctx_pool[i], tctx_pool);
+    dpu_comm_worker((void*)tctx_pool);
 
     for(i = 0; i < nthreads; i++) {
         pthread_join(tctx_pool[i].id, NULL);

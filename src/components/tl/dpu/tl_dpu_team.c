@@ -5,6 +5,7 @@
  */
 
 #include "tl_dpu.h"
+#include "../../../core/ucc_team.h"
 #include "tl_dpu_coll.h"
 #include "coll_score/ucc_coll_score.h"
 
@@ -262,6 +263,9 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
     size_t                  total_rkey_size;
     ucp_request_param_t     req_param = {0};
 
+   // fprintf(stderr, "Mamzi calling ucc_tl_dpu_team_create_test  for team=%p \n",
+   //         team);
+
     if (UCC_OK == team->status) {
         return UCC_OK;
     }
@@ -284,6 +288,10 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
         }
 
         /* Continue connection establishment */
+        fprintf(stderr, "Mamzi Continue connection establishment for  team=%p \n",
+                 team);
+//        sleep(20);
+
         ucp_rkey_buffer_release(team->conn_buf->get_sync_rkey_buf);
         team->conn_buf->get_sync_rkey_buf = NULL;
 
@@ -379,6 +387,62 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
         if (team->recv_req[i]) {
             //ucp_request_free(team->recv_req[i]);
         }
+    }
+
+    if (team->status == UCC_OK) {
+        /* notify dpu processes to mirror this team on the DPU world */
+    
+        ucc_tl_dpu_rkey_t *rank_list_rkey = NULL;
+    
+        ucc_tl_dpu_put_sync_t              team_mirroring_signal;
+        ucs_status_ptr_t                   team_mirroring_signal_req;
+        ucp_request_param_t                team_mirror_req_param = {0};
+
+        team_mirroring_signal.coll_id      = -1;
+        team_mirroring_signal.coll_type    = UCC_COLL_TYPE_LAST;
+        team_mirroring_signal.dtype        = UCC_DT_USERDEFINED;
+        team_mirroring_signal.op           = UCC_OP_USERDEFINED;
+        team_mirroring_signal.team_id      = team->super.super.team->id;
+
+        /* register the rank list in world with hca and give its rdma
+         * key/address to dpu*/
+        team_mirroring_signal.rkeys.rank_list = team->super.super.team->ctx_ranks; //TODO verify
+        
+        fprintf(stderr, " team->super.super.team->ctx_ranks[0] : %d\n", team->super.super.team->ctx_ranks[0]);
+
+        team_mirroring_signal.rkeys.rank_list_rkey_len = team->size *
+            sizeof(ucc_rank_t);
+
+        ucc_status = ucc_tl_dpu_register_buf(ctx->ucp_context,
+                team_mirroring_signal.rkeys.rank_list,
+                team_mirroring_signal.rkeys.rank_list_rkey_len,
+                rank_list_rkey);
+
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
+
+        memcpy(team_mirroring_signal.rkeys.rank_list_rkey,
+                rank_list_rkey->rkey_buf, rank_list_rkey->rkey_buf_size);
+
+        tl_info(ctx->super.super.lib, "sending team_mirroring_signal to dpu team, "
+                "coll id = %u", team_mirroring_signal.coll_id);
+
+        team_mirroring_signal_req = ucp_put_nbx(ctx->ucp_ep, &team_mirroring_signal,
+                sizeof(team_mirroring_signal), team->rem_ctrl_seg,
+                team->rem_ctrl_seg_key, &team_mirror_req_param);
+
+        if (ucc_tl_dpu_req_check(team, team_mirroring_signal_req) != UCC_OK) {
+            return UCC_ERR_NO_MESSAGE;
+        }
+
+        /* TODO make this non blocking */
+        while((ucc_tl_dpu_req_test(&team_mirroring_signal_req, ctx->ucp_worker) != UCC_OK)) {
+            ucp_worker_progress(ctx->ucp_worker);
+        }
+        tl_info(ctx->super.super.lib, "sent team_mirroring_signal to dpu team"); 
+
+        fprintf(stderr, "sent team_mirroring_signal to dpu team\n");
     }
 
     return team->status;

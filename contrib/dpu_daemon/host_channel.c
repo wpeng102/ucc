@@ -23,7 +23,7 @@ size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED] = {
     [UCC_DT_UINT128] = 16,
 };
 
-static ucs_status_t _dpu_request_wait (ucp_worker_h ucp_worker, ucs_status_ptr_t request);
+ucs_status_t _dpu_request_wait (ucp_worker_h ucp_worker, ucs_status_ptr_t request);
                                   
 size_t dpu_ucc_dt_size(ucc_datatype_t dt)
 {
@@ -430,7 +430,7 @@ static int _dpu_ep_close(dpu_hc_t *hc)
 }
 
 
-static ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request)
+ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request)
 {
     ucs_status_t status;
 

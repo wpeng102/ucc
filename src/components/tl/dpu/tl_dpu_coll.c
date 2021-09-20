@@ -67,7 +67,7 @@ ucc_status_t ucc_tl_dpu_req_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t reque
     return UCC_OK;
 }
 
-static ucs_status_t ucc_tl_dpu_register_buf(
+ucs_status_t ucc_tl_dpu_register_buf(
     ucp_context_h ucp_ctx,
     void *base, size_t size,
     ucc_tl_dpu_rkey_t *rkey)
@@ -372,6 +372,7 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
                  task, task->status, task->get_sync.coll_id);
         return UCC_OK;
     }
+
 
     assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
     assert(task->get_sync.coll_id == task->put_sync.coll_id);

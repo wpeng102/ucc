@@ -35,6 +35,8 @@
 #define DPU_MAX(a,b) (((a)>(b))?(a):(b))
 
 
+#define DPU_TEAM_POOL_SIZE 2048
+
 typedef struct {
     ucc_team_h          ucc_world_team;
     ucc_lib_h           lib;
@@ -46,7 +48,8 @@ typedef struct {
 typedef struct {
     dpu_ucc_global_t *g;
     ucc_context_h ctx;
-    ucc_team_h team;
+    ucc_team_h team; /* this team always is dpu comm world team */
+    ucc_team_h team_pool[DPU_TEAM_POOL_SIZE];
 } dpu_ucc_comm_t;
 
 int dpu_ucc_init(int argc, char **argv, dpu_ucc_global_t *g);

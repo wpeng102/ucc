@@ -61,16 +61,20 @@ extern size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED];
 typedef struct host_rkey_t {
     char    src_rkey_buf[MAX_RKEY_LEN];
     char    dst_rkey_buf[MAX_RKEY_LEN];
+    char    rank_list_rkey[MAX_RKEY_LEN];
     size_t  src_rkey_len;
     size_t  dst_rkey_len;
+    size_t  rank_list_rkey_len;
     void   *src_buf;
     void   *dst_buf;
+    void   *rank_list;
 } host_rkey_t;
 
 /* sync struct type
  * use it for counter, dtype, ar op, length */
 typedef struct dpu_put_sync_t {
     host_rkey_t         rkeys;
+    uint16_t            team_id;
     ucc_datatype_t      dtype;
     ucc_reduction_op_t  op;
     ucc_coll_type_t     coll_type;
@@ -215,4 +219,7 @@ void dpu_signal_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync);
 void dpu_waitfor_comp_threads(thread_ctx_t *ctx, thread_sync_t *sync);
 void dpu_signal_comp_threads(thread_ctx_t *ctx, thread_sync_t *sync);
 
+ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request);
+
+    
 #endif
