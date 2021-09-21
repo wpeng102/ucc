@@ -391,8 +391,8 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
 
     if (team->status == UCC_OK) {
         /* notify dpu processes to mirror this team on the DPU world */
-    
-        ucc_tl_dpu_rkey_t *rank_list_rkey = NULL;
+ 
+        ucc_tl_dpu_rkey_t rank_list_rkey;
     
         ucc_tl_dpu_put_sync_t              team_mirroring_signal;
         ucs_status_ptr_t                   team_mirroring_signal_req;
@@ -406,24 +406,22 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
 
         /* register the rank list in world with hca and give its rdma
          * key/address to dpu*/
-        team_mirroring_signal.rkeys.rank_list = team->super.super.team->ctx_ranks; //TODO verify
+        team_mirroring_signal.rkeys.rank_list = team->super.super.team->ctx_ranks;
         
-        fprintf(stderr, " team->super.super.team->ctx_ranks[0] : %d\n", team->super.super.team->ctx_ranks[0]);
-
         team_mirroring_signal.rkeys.rank_list_rkey_len = team->size *
             sizeof(ucc_rank_t);
 
         ucc_status = ucc_tl_dpu_register_buf(ctx->ucp_context,
                 team_mirroring_signal.rkeys.rank_list,
                 team_mirroring_signal.rkeys.rank_list_rkey_len,
-                rank_list_rkey);
+                &rank_list_rkey);
 
         if (UCC_OK != ucc_status) {
             goto err;
         }
 
         memcpy(team_mirroring_signal.rkeys.rank_list_rkey,
-                rank_list_rkey->rkey_buf, rank_list_rkey->rkey_buf_size);
+                rank_list_rkey.rkey_buf, rank_list_rkey.rkey_buf_size);
 
         tl_info(ctx->super.super.lib, "sending team_mirroring_signal to dpu team, "
                 "coll id = %u", team_mirroring_signal.coll_id);
@@ -441,8 +439,6 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
             ucp_worker_progress(ctx->ucp_worker);
         }
         tl_info(ctx->super.super.lib, "sent team_mirroring_signal to dpu team"); 
-
-        fprintf(stderr, "sent team_mirroring_signal to dpu team\n");
     }
 
     return team->status;
