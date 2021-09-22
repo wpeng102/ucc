@@ -11,6 +11,7 @@
 #include "core/ucc_ee.h"
 #include "utils/ucc_math.h"
 #include "utils/ucc_coll_utils.h"
+#include "../../../core/ucc_team.h"
 
 ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t *req_p, ucp_worker_h worker)
 {
@@ -289,6 +290,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     task->put_sync.count_total       = coll_args->src.info.count;
     task->put_sync.op                = coll_args->reduce.predefined_op;
     task->put_sync.coll_type         = coll_args->coll_type;
+    task->put_sync.team_id           = team->super.super.team->id;
 
     ucc_tl_dpu_init_rkeys(task);
 
@@ -350,6 +352,8 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
     task->put_sync.dtype             = coll_args->src.info.datatype;
     task->put_sync.count_total       = coll_args->src.info.count;
     task->put_sync.coll_type         = coll_args->coll_type;
+    task->put_sync.team_id           = team->super.super.team->id;
+
     ucc_tl_dpu_init_rkeys(task);
 
     task->super.post     = ucc_tl_dpu_alltoall_start;
@@ -374,9 +378,9 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
     }
 
 
-    assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
-    assert(task->get_sync.coll_id == task->put_sync.coll_id);
-    assert(task->get_sync.count_serviced == task->put_sync.count_total);
+    //assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
+   /// assert(task->get_sync.coll_id == task->put_sync.coll_id);
+   // assert(task->get_sync.count_serviced == task->put_sync.count_total);
     task->status = UCC_TL_DPU_TASK_STATUS_FINALIZED;
     ucc_tl_dpu_finalize_rkeys(task);
     ucc_mpool_put(task);
