@@ -222,10 +222,13 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
     ucs_status_ptr_t            hangup_req;
     ucp_request_param_t         req_param = {0};
  
-    hangup.coll_id      = ++team->coll_id_issued;
+    //hangup.coll_id      = ++team->coll_id_issued;
+    hangup.coll_id      = ++ctx->coll_id_issued;
+    team->coll_id_issued = ctx->coll_id_issued;
     hangup.coll_type    = UCC_COLL_TYPE_LAST;
     hangup.dtype        = UCC_DT_USERDEFINED;
     hangup.op           = UCC_OP_USERDEFINED;
+    hangup.create_new_team = 0;
  
     tl_info(ctx->super.super.lib, "sending hangup to dpu team, coll id = %u", hangup.coll_id);
     hangup_req = ucp_put_nbx(ctx->ucp_ep, &hangup, sizeof(hangup),
@@ -263,17 +266,29 @@ static ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_base_team_t *tl_team)
 
     /* notify dpu processes to mirror this team on the DPU world */
 
+    if (team->super.super.team->ctx_ranks == NULL) {
+        team->status = UCC_INPROGRESS;
+        return team->status;
+    }
+
+    fprintf(stderr, "team->super.super.team->ctx_ranks[0]=%d, team->super.super.team->ctx_ranks[1]=%d\n",
+            team->super.super.team->ctx_ranks[0], team->super.super.team->ctx_ranks[1]);
+
     ucc_tl_dpu_rkey_t rank_list_rkey;
 
     ucc_tl_dpu_put_sync_t              team_mirroring_signal;
     ucs_status_ptr_t                   team_mirroring_signal_req;
     ucp_request_param_t                team_mirror_req_param = {0};
 
-    team_mirroring_signal.coll_id      = -1;
-    team_mirroring_signal.coll_type    = UCC_COLL_TYPE_LAST;
-    team_mirroring_signal.dtype        = UCC_DT_USERDEFINED;
-    team_mirroring_signal.op           = UCC_OP_USERDEFINED;
-    team_mirroring_signal.team_id      = team->super.super.team->id;
+    ctx->coll_id_issued++;
+    team->coll_id_issued = ctx->coll_id_issued;
+
+    team_mirroring_signal.create_new_team      = 1;
+    team_mirroring_signal.coll_id              = ctx->coll_id_issued;
+    team_mirroring_signal.coll_type            = UCC_COLL_TYPE_LAST;
+    team_mirroring_signal.dtype                = UCC_DT_USERDEFINED;
+    team_mirroring_signal.op                   = UCC_OP_USERDEFINED;
+    team_mirroring_signal.team_id              = team->super.super.team->id;
 
     /* register the rank list in world with hca and give its rdma
      * key/address to dpu*/
@@ -296,6 +311,11 @@ static ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_base_team_t *tl_team)
 
     tl_info(ctx->super.super.lib, "sending team_mirroring_signal to dpu team, "
             "coll id = %u", team_mirroring_signal.coll_id);
+
+    /* TODO  get the remote addr/ key rem_ctrl_seg/rem_ctrl_seg_key from the world team */
+
+    team->rem_ctrl_seg = ctx->rem_ctrl_seg;
+    team->rem_ctrl_seg_key = ctx->rem_ctrl_seg_key;
 
     team_mirroring_signal_req = ucp_put_nbx(ctx->ucp_ep, &team_mirroring_signal,
             sizeof(team_mirroring_signal), team->rem_ctrl_seg,
@@ -335,7 +355,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
         return UCC_OK;
     }
 
-    fprintf(stderr, "inside ucc_tl_dpu_team_create_test: team->super.super.team->id = %d \n",team->super.super.team->id);
+    //fprintf(stderr, "inside ucc_tl_dpu_team_create_test: team->super.super.team->id = %d \n",team->super.super.team->id);
 
     if (team->super.super.team->id != 1) {
         /* it is not  comm world team so notify 
@@ -344,8 +364,8 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
         return ucc_tl_dpu_new_team_create_test(tl_team);
     }
 
-    fprintf(stderr, "Mamzi calling ucc_tl_dpu_team_create_test  for team=%p \n",
-            team);
+   // fprintf(stderr, "Mamzi calling ucc_tl_dpu_team_create_test  for team=%p \n",
+     //       team);
 
     if (UCC_OPERATION_INITIALIZED == team->status) {
         for (i = 0; i < tc_poll; i++) {
@@ -365,8 +385,8 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
         }
 
         /* Continue connection establishment */
-        fprintf(stderr, "Mamzi Continue connection establishment for  team=%p \n",
-                 team);
+      //  fprintf(stderr, "Mamzi Continue connection establishment for  team=%p \n",
+        //         team);
 //        sleep(20);
 
         ucp_rkey_buffer_release(team->conn_buf->get_sync_rkey_buf);
@@ -425,6 +445,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
     }
 
     team->rem_ctrl_seg = team->conn_buf->rem_addresses[0];
+
     ucc_status = ucs_status_to_ucc_status(
         ucp_ep_rkey_unpack(ctx->ucp_ep, team->conn_buf->rem_rkeys,
                             &team->rem_ctrl_seg_key));
@@ -465,6 +486,9 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
             //ucp_request_free(team->recv_req[i]);
         }
     }
+
+    ctx->rem_ctrl_seg = team->conn_buf->rem_addresses[0];
+    ctx->rem_ctrl_seg_key = team->rem_ctrl_seg_key; 
 
     return team->status;
 err:

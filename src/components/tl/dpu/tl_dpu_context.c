@@ -241,6 +241,8 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     self->ucp_worker    = ucp_worker;
     self->ucp_ep        = ucp_ep;
     self->inflight      = 0;
+    self->coll_id_issued = 0;
+    self->coll_id_completed = 0;
 
     tl_info(self->super.super.lib, "context created");
     return ucc_status;

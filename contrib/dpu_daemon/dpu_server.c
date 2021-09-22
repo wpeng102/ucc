@@ -203,19 +203,22 @@ void dpu_comm_worker(void *arg)
         ucc_coll_type_t coll_type   = lsync->coll_type;
         size_t          count_total = lsync->count_total;
         uint16_t        team_id     = lsync->team_id;
+        uint16_t        create_team = lsync->create_new_team;
+        
         assert(0 <= team_id && team_id < DPU_TEAM_POOL_SIZE);
         CTX_LOG(
             "Start coll id: %u, type: %d, count total: %lu\n",
             coll_id, coll_type, count_total);
 
         dpu_signal_comp_threads(comm_thread_ctx, thread_main_sync);
-        if (coll_type == UCC_COLL_TYPE_LAST) {
 
-            if (coll_id == -1) {
+        if (coll_type == UCC_COLL_TYPE_LAST) {
+            if (create_team == 1) {
                 /* signal is new comm create 
                  * mirror host team in dpu world */
 
-                fprintf(stderr, "received team_mirroring_signal \n");
+                fprintf(stderr, "received team_mirroring_signal with comm_thread_ctx->coll_sync.coll_id = %d \n",
+                        comm_thread_ctx->coll_sync.coll_id);
                 
                 /* 
                  *
@@ -282,7 +285,6 @@ void dpu_comm_worker(void *arg)
                         rkey,
                         &req_param);
 
-                //while (_dpu_req_test(status_ptr) != UCS_OK) {
                 _dpu_request_wait(ctx->hc->ucp_worker, status_ptr);
 
                 if (status_ptr != NULL ) {
@@ -337,6 +339,11 @@ void dpu_comm_worker(void *arg)
                 }
                 
                 fprintf(stderr, "created all the new teams  \n");
+
+                continue;
+
+        //        goto next_task;
+
             } else {
 
                 /* Hang up */
@@ -351,6 +358,8 @@ void dpu_comm_worker(void *arg)
             dpu_hc_issue_put(comm_thread_ctx->hc, lsync, comm_thread_ctx);
             dpu_hc_progress(comm_thread_ctx->hc, lsync, comm_thread_ctx);
         }
+
+next_task:
 
         CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n", coll_id, coll_type);
         dpu_waitfor_comp_threads(comm_thread_ctx, thread_main_sync);

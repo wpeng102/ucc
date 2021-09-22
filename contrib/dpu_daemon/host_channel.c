@@ -643,6 +643,8 @@ int dpu_hc_wait(dpu_hc_t *hc, unsigned int next_coll_id)
 {
     dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
 
+    fprintf(stderr, "lsync->coll_id=%d, next_coll_id=%d \n",
+            lsync->coll_id, next_coll_id);
     while( lsync->coll_id < next_coll_id) {
         ucp_worker_progress(hc->ucp_worker);
     }

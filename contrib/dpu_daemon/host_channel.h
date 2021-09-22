@@ -75,6 +75,7 @@ typedef struct host_rkey_t {
 typedef struct dpu_put_sync_t {
     host_rkey_t         rkeys;
     uint16_t            team_id;
+    uint16_t            create_new_team;
     ucc_datatype_t      dtype;
     ucc_reduction_op_t  op;
     ucc_coll_type_t     coll_type;

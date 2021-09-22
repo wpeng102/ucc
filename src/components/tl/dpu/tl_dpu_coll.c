@@ -179,6 +179,9 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     if (ucc_tl_dpu_req_check(team, put_req->sync_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
     }
+
+    fprintf(stderr, "sent  task->put_sync.coll_id=%d \n", task->put_sync.coll_id);
+
     tl_info(UCC_TL_TEAM_LIB(task->team), "Sent task to DPU: %p, coll type %d id %d count %u",
             task, task->put_sync.coll_type, task->put_sync.coll_id, task->put_sync.count_total);
  
@@ -223,6 +226,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
             team->get_sync.count_serviced    = 0;
             team->coll_id_completed++;
             assert(team->coll_id_completed == task->get_sync.coll_id);
+            ctx->coll_id_completed = team->coll_id_completed;
             return UCC_OK;
         }
     }
@@ -291,8 +295,11 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     task->put_sync.op                = coll_args->reduce.predefined_op;
     task->put_sync.coll_type         = coll_args->coll_type;
     task->put_sync.team_id           = team->super.super.team->id;
+    task->put_sync.create_new_team   = 0;
 
     ucc_tl_dpu_init_rkeys(task);
+
+    fprintf(stderr, "ucc_tl_dpu_allreduce_init: task->put_sync.coll_id= %d\n", task->put_sync.coll_id);
 
     task->super.post     = ucc_tl_dpu_allreduce_start;
     task->super.progress = ucc_tl_dpu_allreduce_progress;
@@ -353,6 +360,7 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
     task->put_sync.count_total       = coll_args->src.info.count;
     task->put_sync.coll_type         = coll_args->coll_type;
     task->put_sync.team_id           = team->super.super.team->id;
+    task->put_sync.create_new_team   = 0;
 
     ucc_tl_dpu_init_rkeys(task);
 
@@ -407,7 +415,9 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
     task->super.triggered_post       = NULL;
     task->status                     = UCC_TL_DPU_TASK_STATUS_INIT;
     
-    tl_team->coll_id_issued++;
+    //tl_team->coll_id_issued++;
+    ctx->coll_id_issued++;
+    tl_team->coll_id_issued =  ctx->coll_id_issued;
 
     switch (coll_args->args.coll_type) {
     case UCC_COLL_TYPE_ALLREDUCE:

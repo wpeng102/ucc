@@ -64,6 +64,10 @@ typedef struct ucc_tl_dpu_context {
     ucc_tl_dpu_context_config_t cfg;
     ucp_context_h               ucp_context;
     ucp_worker_h                ucp_worker;
+    uint64_t                    rem_ctrl_seg;
+    ucp_rkey_h                  rem_ctrl_seg_key;
+    uint32_t                    coll_id_issued;
+    uint32_t                    coll_id_completed;
     ucp_ep_h                    ucp_ep;
     ucc_mpool_t                 req_mp;
     volatile size_t             inflight;
@@ -86,6 +90,7 @@ typedef struct ucc_tl_dpu_rkeys_t {
 typedef struct ucc_tl_dpu_put_sync_t {
     ucc_tl_dpu_put_rkeys_t   rkeys;
     uint16_t                 team_id;
+    uint16_t                  create_new_team;
     ucc_datatype_t           dtype;
     ucc_reduction_op_t       op;
     ucc_coll_type_t          coll_type;
