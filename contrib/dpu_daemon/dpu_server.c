@@ -189,6 +189,7 @@ void dpu_comm_worker(void *arg)
         ctx->coll_sync.count_serviced = 0;
         ctx->buf_idx = 0;
 
+        CTX_LOG("Waiting for coll id: %d from host\n", ctx->coll_sync.coll_id);
         dpu_wait_for_next_coll(ctx);
 
         unsigned int    coll_id     = lsync->coll_id;
@@ -234,6 +235,7 @@ void *dpu_worker(void *arg)
         ctx->coll_sync.count_serviced = 0;
         ctx->buf_idx = 0;
 
+        CTX_LOG("Waiting for coll id: %d from comm thread\n", ctx->coll_sync.coll_id);
         dpu_waitfor_comm_thread(ctx, thread_main_sync);
 
         unsigned int coll_id      = lsync->coll_id;
@@ -348,6 +350,7 @@ int main(int argc, char **argv)
         dpu_ucc_free_team(&ucc_glob, &tctx_pool[i].comm);
     }
 
+    dpu_hc_finalize(hc);
     dpu_ucc_finalize(&ucc_glob);
     return 0;
 }

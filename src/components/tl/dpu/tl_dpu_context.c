@@ -258,10 +258,11 @@ err:
 UCC_CLASS_CLEANUP_FUNC(ucc_tl_dpu_context_t)
 {
     ucp_request_param_t param;
-    ucc_status_t ucc_status;
-    void *close_req;
+    ucs_status_t ucs_status;
+    ucs_status_ptr_t close_req;
 
     tl_info(self->super.super.lib, "finalizing tl context: %p", self);
+    ucp_worker_flush(self->ucp_worker);
 
     param.op_attr_mask  = UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = UCP_EP_CLOSE_FLAG_FORCE;
@@ -269,9 +270,8 @@ UCC_CLASS_CLEANUP_FUNC(ucc_tl_dpu_context_t)
     if (UCS_PTR_IS_PTR(close_req)) {
         do {
             ucp_worker_progress(self->ucp_worker);
-            ucc_status = ucs_status_to_ucc_status(
-                ucp_request_check_status(close_req));
-        } while (ucc_status == UCC_INPROGRESS);
+            ucs_status = ucp_request_check_status(close_req);
+        } while (ucs_status == UCS_INPROGRESS);
         ucp_request_free (close_req);
     } else if (UCS_PTR_STATUS(close_req) != UCS_OK) {
         tl_error(self->super.super.lib, "failed to close ep %p\n", (void *)self->ucp_ep);

@@ -25,7 +25,7 @@
 #define UCC_TL_DPU_EXCHANGE_ADDR_TAG 3ull
 
 #define MAX_DPU_HOST_NAME 256
-#define MAX_RKEY_LEN      256
+#define MAX_RKEY_LEN      1024
 
 typedef enum {
     UCC_TL_DPU_TASK_STATUS_INIT,

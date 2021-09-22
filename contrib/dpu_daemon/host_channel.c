@@ -124,9 +124,12 @@ static int _dpu_listen_cleanup(dpu_hc_t *hc)
     close(hc->listenfd);
     free(hc->ip);
     free(hc->hname);
+    ucp_rkey_destroy(hc->src_rkey);
+    ucp_rkey_destroy(hc->dst_rkey);
+    ucp_rkey_destroy(hc->sync_rkey);
 }
 
-ucc_status_t _dpu_req_test(ucs_status_ptr_t *request)
+ucc_status_t _dpu_req_test(ucs_status_ptr_t request)
 {
     if (request == NULL) {
         return UCS_OK;
@@ -140,27 +143,23 @@ ucc_status_t _dpu_req_test(ucs_status_ptr_t *request)
     }
 }
 
-inline
-ucc_status_t _dpu_req_check(ucs_status_ptr_t *req)
-{
-    if (UCS_PTR_IS_ERR(req)) {
-        fprintf(stderr, "failed to send/recv msg\n");
-        return UCC_ERR_NO_MESSAGE;
-    }
-    return UCC_OK;
-}
-
 static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 {
     printf ("error handling callback was invoked with status %d (%s)\n",
             status, ucs_status_string(status));
 }
 
-static void _empty_cb(void* request, ucs_status_t status) {}
+static ucs_status_t _dpu_ep_flush(dpu_hc_t *hc)
+{
+    ucp_request_param_t param = {};
+    ucs_status_ptr_t request = ucp_ep_flush_nbx(hc->host_ep, &param);
+    return _dpu_request_wait(hc->ucp_worker, request);
+}
 
 static ucs_status_t _dpu_worker_flush(dpu_hc_t *hc)
 {
-    ucs_status_ptr_t request = ucp_worker_flush_nb(hc->ucp_worker, 0, _empty_cb);
+    ucp_request_param_t param = {};
+    ucs_status_ptr_t request = ucp_worker_flush_nbx(hc->ucp_worker, &param);
     return _dpu_request_wait(hc->ucp_worker, request);
 }
 
@@ -386,8 +385,7 @@ static ucs_status_t _dpu_ep_create (dpu_hc_t *hc, void *rem_worker_addr)
     ucs_status_t status;
     ucp_ep_params_t ep_params;
 
-    ep_params.field_mask    = UCP_EP_PARAM_FIELD_FLAGS |
-                              UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
+    ep_params.field_mask    = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
                               UCP_EP_PARAM_FIELD_ERR_HANDLER |
                               UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
     ep_params.err_mode		= UCP_ERR_HANDLING_MODE_PEER;
@@ -632,6 +630,12 @@ int dpu_hc_accept(dpu_hc_t *hc)
         goto err;
     }
 
+
+    ret = _dpu_ep_flush(hc);
+    if (ret) {
+        fprintf(stderr, "ep flush failed!\n");
+        goto err;
+    }
     return ret;
 
 err:
@@ -661,11 +665,10 @@ int dpu_hc_wait(dpu_hc_t *hc, unsigned int next_coll_id)
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
 {
     ucs_status_t status;
-    dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
-    // memset(lsync, 0, sizeof(dpu_put_sync_t));
-    _dpu_hc_reset_pipeline(hc);
+    DPU_LOG("Flushing host ep for coll_id: %d\n", coll_sync->coll_id);
+    _dpu_worker_flush(hc);
 
-    //_dpu_worker_flush(hc);
+
     assert(hc->pipeline.sync_req == NULL);
     ucp_worker_fence(hc->ucp_worker);
     DPU_LOG("Notify host completed coll_id: %d, serviced: %lu\n", coll_sync->coll_id, coll_sync->count_serviced);
@@ -678,8 +681,10 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
         fprintf(stderr, "failed to notify host of completion (%s)\n", ucs_status_string(status));
         return -1;
     }
-    //_dpu_worker_flush(hc);
-    
+
+    ucp_rkey_destroy(hc->src_rkey);
+    ucp_rkey_destroy(hc->dst_rkey);
+    _dpu_hc_reset_pipeline(hc);
     return 0;
 }
 
@@ -746,7 +751,7 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *
     stage->put.ucp_req =
             ucp_put_nbx(hc->host_ep, src_addr, data_size,
             (uint64_t)dst_addr, hc->dst_rkey, &hc->req_param);
-    
+
     stage->put.count = count;
     hc->pipeline.count_put.issued += count;
     hc->pipeline.inflight.put++;
@@ -799,7 +804,7 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
     ucc_status_t status;
     dpu_stage_t *stage; /* which buffer index is being used */
     dpu_pipeline_stage_state_t state;
-    ucs_status_ptr_t *request;
+    ucs_status_ptr_t request;
 
     for (i=0; i<10; i++) {
         if (ucp_worker_progress(hc->ucp_worker)) {
@@ -811,7 +816,8 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
         /* Get progress */
         stage = &hc->pipeline.stage[i];
         state = stage->get.state;
-        if (state == IN_PROGRESS && hc->pipeline.inflight.get > 0) {
+        if (state == IN_PROGRESS) {
+            assert(hc->pipeline.inflight.get > 0);
             request = stage->get.ucp_req;
             if (_dpu_req_test(request) == UCS_OK) {
                 if (request != NULL ) {
@@ -832,7 +838,8 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
 
         /* Allreduce progress */
         state = stage->ar.state;
-        if (state == IN_PROGRESS && hc->pipeline.inflight.ar > 0) {
+        if (state == IN_PROGRESS) {
+            assert(hc->pipeline.inflight.ar > 0);
             if (dpu_check_comp_status(ctx, thread_sub_sync) == UCC_OK) {
                 assert(stage->get.state == DONE);
                 assert(stage->put.state == FREE);
@@ -851,7 +858,8 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
 
         /* Put progress */
         state = stage->put.state;
-        if (state == IN_PROGRESS && hc->pipeline.inflight.put > 0) {
+        if (state == IN_PROGRESS) {
+            assert(hc->pipeline.inflight.put > 0);
             request = stage->put.ucp_req;
             if (_dpu_req_test(request) == UCS_OK) {
                 if (request != NULL) {
@@ -874,4 +882,17 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
         }
     }
     return UCS_OK;
+}
+
+int dpu_hc_finalize(dpu_hc_t *hc)
+{
+    _dpu_ep_flush(hc);
+    _dpu_worker_flush(hc);
+    _dpu_listen_cleanup(hc);
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.in);
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.out);
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.sync);
+    _dpu_ep_close(hc);
+    _dpu_ucx_fini(hc);
+    return UCC_OK;
 }
