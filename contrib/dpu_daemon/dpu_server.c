@@ -212,7 +212,6 @@ void dpu_comm_worker(void *arg)
             "Start coll id: %u, type: %d, count total: %lu\n",
             coll_id, coll_type, count_total);
 
-        dpu_signal_comp_threads(comm_thread_ctx, thread_main_sync);
 
         if (coll_type == UCC_COLL_TYPE_LAST) {
             if (create_team == 1) {
@@ -349,9 +348,13 @@ void dpu_comm_worker(void *arg)
             } else {
 
                 /* Hang up */
+                dpu_signal_comp_threads(comm_thread_ctx,
+                        thread_main_sync);
                 break;
             }
         }
+
+        dpu_signal_comp_threads(comm_thread_ctx, thread_main_sync);
 
         dpu_pipeline_t *pipe = &comm_thread_ctx->hc->pipeline;
         while (pipe->count_put.done < count_total) {
