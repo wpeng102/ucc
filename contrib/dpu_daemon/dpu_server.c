@@ -199,6 +199,8 @@ void dpu_comm_worker(void *arg)
 
         dpu_wait_for_next_coll(comm_thread_ctx);
 
+        fprintf(stderr, "got a new task from host: lsync->coll_id=%d and lsync->team_id=%d\n",
+                lsync->coll_id, lsync->team_id);
         unsigned int    coll_id     = lsync->coll_id;
         ucc_coll_type_t coll_type   = lsync->coll_type;
         size_t          count_total = lsync->count_total;

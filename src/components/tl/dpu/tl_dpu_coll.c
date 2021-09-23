@@ -197,7 +197,10 @@ static ucc_status_t ucc_tl_dpu_check_progress(
     ucc_tl_dpu_team_t *team = task->team;
     ucc_status_t status;
 
-    if (task->status == UCC_TL_DPU_TASK_STATUS_INIT && task->put_sync.coll_id == team->coll_id_completed + 1) {
+    //fprintf(stderr, "in ucc_tl_dpu_check_progress with task->put_sync.coll_id=%d and team->coll_id_completed=%d and task->status=%d \n",
+    //        task->put_sync.coll_id, ctx->coll_id_completed, task->status);
+
+    if (task->status == UCC_TL_DPU_TASK_STATUS_INIT && task->put_sync.coll_id == ctx->coll_id_completed + 1) {
         task->status = UCC_TL_DPU_TASK_STATUS_POSTED;
         tl_info(UCC_TL_TEAM_LIB(task->team), "Put to DPU coll task: %p, coll id %d", task, task->put_sync.coll_id);
         status = ucc_tl_dpu_issue_put(task, ctx, team);
@@ -224,9 +227,9 @@ static ucc_status_t ucc_tl_dpu_check_progress(
             team->get_sync.count_serviced    = team->get_sync.count_serviced;
             team->get_sync.coll_id           = 0;
             team->get_sync.count_serviced    = 0;
-            team->coll_id_completed++;
+            ctx->coll_id_completed++;
+            team->coll_id_completed = ctx->coll_id_completed;
             assert(team->coll_id_completed == task->get_sync.coll_id);
-            ctx->coll_id_completed = team->coll_id_completed;
             return UCC_OK;
         }
     }

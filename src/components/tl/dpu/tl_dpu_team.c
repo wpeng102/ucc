@@ -333,6 +333,9 @@ static ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_base_team_t *tl_team)
 
     team->status = UCC_OK;
 
+    ctx->coll_id_completed++;
+    team->coll_id_completed = ctx->coll_id_completed;
+
     return team->status;
 
 err:
