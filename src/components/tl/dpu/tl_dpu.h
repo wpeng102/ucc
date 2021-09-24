@@ -59,6 +59,11 @@ typedef struct ucc_tl_dpu_lib {
 UCC_CLASS_DECLARE(ucc_tl_dpu_lib_t, const ucc_base_lib_params_t *,
                   const ucc_base_config_t *);
 
+typedef struct ucc_tl_dpu_get_sync_t {
+    volatile uint32_t       count_serviced;
+    volatile uint32_t       coll_id;
+} ucc_tl_dpu_get_sync_t;
+
 typedef struct ucc_tl_dpu_context {
     ucc_tl_context_t            super;
     ucc_tl_dpu_context_config_t cfg;
@@ -68,6 +73,7 @@ typedef struct ucc_tl_dpu_context {
     ucp_rkey_h                  rem_ctrl_seg_key;
     uint32_t                    coll_id_issued;
     uint32_t                    coll_id_completed;
+    ucc_tl_dpu_get_sync_t       get_sync; 
     ucp_ep_h                    ucp_ep;
     ucc_mpool_t                 req_mp;
     volatile size_t             inflight;
@@ -90,18 +96,13 @@ typedef struct ucc_tl_dpu_rkeys_t {
 typedef struct ucc_tl_dpu_put_sync_t {
     ucc_tl_dpu_put_rkeys_t   rkeys;
     uint16_t                 team_id;
-    uint16_t                  create_new_team;
+    uint16_t                 create_new_team;
     ucc_datatype_t           dtype;
     ucc_reduction_op_t       op;
     ucc_coll_type_t          coll_type;
     uint32_t                 count_total;
     uint32_t                 coll_id;
 } ucc_tl_dpu_put_sync_t;
-
-typedef struct ucc_tl_dpu_get_sync_t {
-    volatile uint32_t       count_serviced;
-    volatile uint32_t       coll_id;
-} ucc_tl_dpu_get_sync_t;
 
 typedef struct ucc_tl_dpu_put_request {
     ucs_status_ptr_t data_req;
