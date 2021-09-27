@@ -59,6 +59,7 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
     memcpy(team_mirroring_signal.rkeys.rank_list_rkey,
             rank_list_rkey.rkey_buf, rank_list_rkey.rkey_buf_size);
 
+
     tl_info(ctx->super.super.lib, "sending team_mirroring_signal to dpu team, "
             "coll id = %u", team_mirroring_signal.coll_id);
 
@@ -68,8 +69,8 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
     team->rem_ctrl_seg_key = ctx->rem_ctrl_seg_key;
 
     team_mirroring_signal_req = ucp_put_nbx(ctx->ucp_ep, &team_mirroring_signal,
-            sizeof(team_mirroring_signal), team->rem_ctrl_seg,
-            team->rem_ctrl_seg_key, &team_mirror_req_param);
+            sizeof(team_mirroring_signal), ctx->rem_ctrl_seg,
+            ctx->rem_ctrl_seg_key, &team_mirror_req_param);
 
     if (ucc_tl_dpu_req_check(team, team_mirroring_signal_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
@@ -282,6 +283,11 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
         }
     }
 
+    if (self->status == UCC_OK) {
+        ctx->rem_ctrl_seg = self->conn_buf->rem_addresses[0];
+        ctx->rem_ctrl_seg_key = self->rem_ctrl_seg_key; 
+    }
+
     return self->status;
 err:
     if (self->conn_buf->rem_rkeys) {
@@ -476,8 +482,10 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
         }
     }
 
-    ctx->rem_ctrl_seg = team->conn_buf->rem_addresses[0];
-    ctx->rem_ctrl_seg_key = team->rem_ctrl_seg_key; 
+    if (team->status == UCC_OK) {
+        ctx->rem_ctrl_seg = team->conn_buf->rem_addresses[0];
+        ctx->rem_ctrl_seg_key = team->rem_ctrl_seg_key; 
+    }
 
     return team->status;
 err:
