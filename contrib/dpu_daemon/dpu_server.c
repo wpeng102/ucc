@@ -300,14 +300,19 @@ void dpu_comm_worker(void *arg)
                     team_mirroring_signal->rkeys.rank_list_rkey_len/sizeof(ucc_rank_t);
 
                 ucc_rank_t full_size = ctx->comm.g->size;
-
                 ucc_team_params_t      team_params;
 
-                team_params.ep       = ctx->comm.g->rank;
                 team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
                 team_params.mask     = UCC_TEAM_PARAM_FIELD_EP |
                                        UCC_TEAM_PARAM_FIELD_EP_RANGE |
                                        UCC_TEAM_PARAM_FIELD_EP_MAP;
+
+                /*  find my new rank in the new team */
+                for( i = 0; i < team_size; i++) {
+                    if (rank_list[i] == ctx->comm.g->rank)
+                      break;
+                 }
+                team_params.ep = i; 
 
                 team_params.ep_map   = ucc_ep_map_from_array(&rank_list,
                         team_size, full_size, 0);
@@ -339,11 +344,9 @@ void dpu_comm_worker(void *arg)
                     ctx->comm.team_pool[team_id] = new_team; 
                 }
                 
-                fprintf(stderr, "created all the new teams  \n");
+                fprintf(stderr, "created all the new teams  \n" );
 
                 continue;
-
-        //        goto next_task;
 
             } else {
 
@@ -363,8 +366,6 @@ void dpu_comm_worker(void *arg)
             dpu_hc_issue_put(comm_thread_ctx->hc, lsync, comm_thread_ctx);
             dpu_hc_progress(comm_thread_ctx->hc, lsync, comm_thread_ctx);
         }
-
-next_task:
 
         CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n", coll_id, coll_type);
         dpu_waitfor_comp_threads(comm_thread_ctx, thread_main_sync);
