@@ -233,31 +233,6 @@ void dpu_comm_worker(void *arg)
 
                 /* Step 1 */
 
-
-                /*
-                 * TODO #1:
-                 *
-                 * 1. Create new_team for each thread (add a for loop) just like main()
-                 * 
-                 *
-                 *
-                 *
-                 * */
-                /*
-                 * TODO #2
-                 *
-                 *  Steps:
-                 *
-                 *  1. insert into threaed context  this new team to a list of
-                 *  teams that we created
-                 *  2. save this new_team inside the thread context for each thread
-                 *  3. use team_id to hash and find the new_team
-                 *  4. how to use new_team to call allredce? --> change the
-                 *  input of ucc_collective_init
-                 *
-                 *
-                 * */
-
                 int i = 0;
                 thread_ctx_t *ctx = &(tctx_pool[0]);
                 dpu_put_sync_t * team_mirroring_signal = lsync;
@@ -348,12 +323,56 @@ void dpu_comm_worker(void *arg)
 
                 continue;
 
-            } else {
+            } else if (team_id == 1) {
 
-                /* Hang up */
+                /* World team free so Hang up */
                 dpu_signal_comp_threads(comm_thread_ctx,
                         thread_main_sync);
                 break;
+
+            } else {
+
+                /* releasing a subcomm's team that was already created
+                 * on the dpu world */
+
+                fprintf(stderr, "received team_releasing_signal with "
+                        "comm_thread_ctx->coll_sync.coll_id = %d and team_id ="
+                        " %d \n",
+                        comm_thread_ctx->coll_sync.coll_id, team_id);
+
+                /*
+                 * 1. make sure this team is not in use
+                 * 2. free it and put NULL in the teams pool
+                 *
+                 */
+
+                int i = 0;
+                thread_ctx_t *ctx   = NULL;
+                ucc_team_h new_team = NULL;
+                ucc_status_t status = UCC_OK;
+
+                for (i = 0; i < nthreads; i++) {
+
+                    ctx = &(tctx_pool[i]);
+                    new_team = ctx->comm.team_pool[team_id]; 
+
+                    status = UCC_INPROGRESS;
+                    
+                    do {
+                        status = ucc_team_destroy(new_team);
+                        if (status < 0) {
+                            fprintf(stderr, "ucc_team_destroy failed for thread ctx %d\n",
+                                    i);
+                            return;
+                        }
+                    } while (status != UCC_OK);
+
+                    ctx->comm.team_pool[team_id] = NULL; 
+                }
+
+                fprintf(stderr, "destroyed all teams with  team_id = %d \n", team_id);
+
+                continue;
             }
         }
 

@@ -114,7 +114,7 @@ out:
     return status;
 }
 
-static ucc_status_t ucc_tl_dpu_deregister_buf(
+ucc_status_t ucc_tl_dpu_deregister_buf(
     ucp_context_h ucp_ctx, ucc_tl_dpu_rkey_t *rkey)
 {
     ucs_status_t status = UCS_OK;

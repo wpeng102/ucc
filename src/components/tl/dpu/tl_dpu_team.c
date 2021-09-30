@@ -24,7 +24,7 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
     fprintf(stderr, "team->super.super.team->ctx_ranks[0]=%d, team->super.super.team->ctx_ranks[1]=%d\n",
             team->super.super.team->ctx_ranks[0], team->super.super.team->ctx_ranks[1]);
 
-    ucc_tl_dpu_rkey_t rank_list_rkey;
+    ucc_tl_dpu_rkey_t *rank_list_rkey = &team->ctx_rank_rkey;
 
     ucc_tl_dpu_put_sync_t              team_mirroring_signal;
     ucs_status_ptr_t                   team_mirroring_signal_req;
@@ -50,14 +50,14 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
     ucc_status = ucc_tl_dpu_register_buf(ctx->ucp_context,
             team_mirroring_signal.rkeys.rank_list,
             team_mirroring_signal.rkeys.rank_list_rkey_len,
-            &rank_list_rkey);
+            rank_list_rkey);
 
     if (UCC_OK != ucc_status) {
         goto err;
     }
 
     memcpy(team_mirroring_signal.rkeys.rank_list_rkey,
-            rank_list_rkey.rkey_buf, rank_list_rkey.rkey_buf_size);
+            rank_list_rkey->rkey_buf, rank_list_rkey->rkey_buf_size);
 
 
     tl_info(ctx->super.super.lib, "sending team_mirroring_signal to dpu team, "
@@ -115,6 +115,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
     self->size      = params->params.oob.n_oob_eps;
     self->rank      = params->rank;
     self->status    = UCC_OPERATION_INITIALIZED;
+    self->ctx_rank_rkey.rkey_buf_size = 0;
 
     /*  avoid preparing the get_sync for teams other than world */
     if (params->id != 1) {
@@ -317,16 +318,20 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
     ucc_tl_dpu_put_sync_t       hangup;
     ucs_status_ptr_t            hangup_req;
     ucp_request_param_t         req_param = {0};
- 
-    //hangup.coll_id      = ++team->coll_id_issued;
+
+    /* Send notification to dpu for releasing the mirroring team on
+     * dpu world (if it is releasing a subcomm's team) or ask dpu to 
+     * finalize (if it is releasing comm world'd team) */
+
     hangup.coll_id      = ++ctx->coll_id_issued;
     team->coll_id_issued = ctx->coll_id_issued;
     hangup.coll_type    = UCC_COLL_TYPE_LAST;
     hangup.dtype        = UCC_DT_USERDEFINED;
     hangup.op           = UCC_OP_USERDEFINED;
+    hangup.team_id      = team->super.super.team->id;
     hangup.create_new_team = 0;
  
-    tl_info(ctx->super.super.lib, "sending hangup to dpu team, coll id = %u", hangup.coll_id);
+    tl_info(ctx->super.super.lib, "sending hangup/team_free to dpu team, coll id = %u", hangup.coll_id);
     hangup_req = ucp_put_nbx(ctx->ucp_ep, &hangup, sizeof(hangup),
                              team->rem_ctrl_seg, team->rem_ctrl_seg_key,
                              &req_param);
@@ -336,19 +341,30 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
     while((ucc_tl_dpu_req_test(&hangup_req, ctx->ucp_worker) != UCC_OK)) {
         ucp_worker_progress(ctx->ucp_worker);
     }
-    tl_info(ctx->super.super.lib, "sent hangup to dpu team");
+    tl_info(ctx->super.super.lib, "sent hangup/team_free to dpu team");
  
-    ucp_rkey_destroy(team->rem_ctrl_seg_key);
-    ucp_rkey_destroy(team->rem_data_in_key);
-    ucp_rkey_destroy(team->rem_data_out_key);
-    ucp_mem_unmap(ctx->ucp_context, team->get_sync_memh);
+    if (team->super.super.team->id != 1) {
+        /* destroying a team for a sub comm other than world  */
+        ucc_tl_dpu_deregister_buf(ctx->ucp_context, &team->ctx_rank_rkey);
+        fprintf(stderr, "destroyed a subcomm dpu team with  team_id=%d \n",
+                team->super.super.team->id);
+    } else {
+        /* It is destroying the world team */
+        ucp_rkey_destroy(team->rem_ctrl_seg_key);
+        ucp_rkey_destroy(team->rem_data_in_key);
+        ucp_rkey_destroy(team->rem_data_out_key);
+        ucp_mem_unmap(ctx->ucp_context, team->get_sync_memh);
 
-    ucc_free(team->rem_data_in);
-    ucc_free(team->rem_data_out);
+        ucc_free(team->rem_data_in);
+        ucc_free(team->rem_data_out);
+
+        fprintf(stderr, "destroyed a  world dpu team \n");
+    }
+
     if (hangup_req) {
         ucp_request_free(hangup_req);
     }
-
+    
     UCC_CLASS_DELETE_FUNC_NAME(ucc_tl_dpu_team_t)(tl_team);
 
     return UCC_OK;

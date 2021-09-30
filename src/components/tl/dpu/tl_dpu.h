@@ -119,6 +119,12 @@ typedef struct ucc_tl_dpu_connect_s {
     uint64_t                rem_addresses[3];
 } ucc_tl_dpu_conn_buf_t;
 
+typedef struct ucc_tl_dpu_rkey_t {
+    ucp_mem_h memh;
+    void     *rkey_buf;
+    size_t    rkey_buf_size;
+} ucc_tl_dpu_rkey_t;
+
 typedef struct ucc_tl_dpu_team {
     ucc_tl_team_t         super;
     ucc_status_t          status;
@@ -128,6 +134,7 @@ typedef struct ucc_tl_dpu_team {
     uint32_t              coll_id_completed;
     ucc_tl_dpu_get_sync_t get_sync;
     ucp_mem_h             get_sync_memh;
+    ucc_tl_dpu_rkey_t     ctx_rank_rkey;
     uint64_t              rem_ctrl_seg;
     ucp_rkey_h            rem_ctrl_seg_key;
     uint64_t              *rem_data_in;
@@ -144,12 +151,6 @@ UCC_CLASS_DECLARE(ucc_tl_dpu_team_t, ucc_base_context_t *,
 typedef struct ucc_tl_dpu_task_req_t {
     ucc_tl_dpu_put_request_t put_req;
 } ucc_tl_dpu_task_req_t;
-
-typedef struct ucc_tl_dpu_rkey_t {
-    ucp_mem_h memh;
-    void     *rkey_buf;
-    size_t    rkey_buf_size;
-} ucc_tl_dpu_rkey_t;
 
 typedef struct ucc_tl_dpu_task {
     ucc_coll_task_t          super;
@@ -188,5 +189,6 @@ ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t *req_p, ucp_worker_h worker);
 ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team, ucs_status_ptr_t req);
 ucc_status_t ucc_tl_dpu_req_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t req);
 ucs_status_t ucc_tl_dpu_register_buf( ucp_context_h ucp_ctx, void *base, size_t size, ucc_tl_dpu_rkey_t *rkey);
+ucc_status_t ucc_tl_dpu_deregister_buf( ucp_context_h ucp_ctx, ucc_tl_dpu_rkey_t *rkey);
 
 #endif
