@@ -97,7 +97,6 @@ err:
 UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
                     const ucc_base_team_params_t *params)
 {
-
     ucc_status_t ucc_status = UCC_OK; 
     ucc_tl_dpu_context_t *ctx =
         ucc_derived_of(tl_context, ucc_tl_dpu_context_t);
@@ -357,8 +356,6 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
 
         ucc_free(team->rem_data_in);
         ucc_free(team->rem_data_out);
-
-        fprintf(stderr, "destroyed a  world dpu team \n");
     }
 
     if (hangup_req) {
@@ -400,6 +397,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
             return UCC_INPROGRESS;
         }
 
+        /* Continue connection establishment */
         ucp_rkey_buffer_release(team->conn_buf->get_sync_rkey_buf);
         team->conn_buf->get_sync_rkey_buf = NULL;
 
@@ -456,7 +454,6 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
     }
 
     team->rem_ctrl_seg = team->conn_buf->rem_addresses[0];
-
     ucc_status = ucs_status_to_ucc_status(
         ucp_ep_rkey_unpack(ctx->ucp_ep, team->conn_buf->rem_rkeys,
                             &team->rem_ctrl_seg_key));

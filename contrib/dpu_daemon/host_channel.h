@@ -23,7 +23,7 @@
 #include <ucc/api/ucc.h>
 #include <ucp/api/ucp.h>
 
-#define MAX_RKEY_LEN        256
+#define MAX_RKEY_LEN        1024
 #define IP_STRING_LEN       50
 #define PORT_STRING_LEN     8
 #define SUCCESS             0
@@ -114,7 +114,7 @@ typedef enum dpu_pipeline_stage_state_t {
 typedef struct dpu_pipeline_stage_t {
     volatile dpu_pipeline_stage_state_t state;
     void                      *buf;
-    ucs_status_ptr_t          *ucp_req;
+    ucs_status_ptr_t           ucp_req;
     volatile size_t            count;
 } dpu_pipeline_stage_t;
 
@@ -185,6 +185,7 @@ int dpu_hc_init(dpu_hc_t *dpu_hc);
 int dpu_hc_accept(dpu_hc_t *hc);
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync);
 int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id);
+int dpu_hc_finalize(dpu_hc_t *dpu_hc);
 
 
 typedef struct thread_ctx_t {
@@ -224,3 +225,6 @@ ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request
 
     
 #endif
+=======
+#endif
+>>>>>>> sourav/dpu-pull

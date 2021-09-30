@@ -25,7 +25,7 @@
 #define UCC_TL_DPU_EXCHANGE_ADDR_TAG 3ull
 
 #define MAX_DPU_HOST_NAME 256
-#define MAX_RKEY_LEN      256
+#define MAX_RKEY_LEN      1024
 
 typedef enum {
     UCC_TL_DPU_TASK_STATUS_INIT,
@@ -72,6 +72,14 @@ typedef struct ucc_tl_dpu_context {
     uint64_t                    rem_ctrl_seg;
     ucp_rkey_h                  rem_ctrl_seg_key;
     uint32_t                    coll_id_issued;
+typedef struct ucc_tl_dpu_context {
+    ucc_tl_context_t            super;
+    ucc_tl_dpu_context_config_t cfg;
+    ucp_context_h               ucp_context;
+    ucp_worker_h                ucp_worker;
+    uint64_t                    rem_ctrl_seg;
+    ucp_rkey_h                  rem_ctrl_seg_key;
+    uint32_t                    coll_id_issued;
     uint32_t                    coll_id_completed;
     ucc_tl_dpu_get_sync_t       get_sync; 
     ucp_ep_h                    ucp_ep;
@@ -98,12 +106,21 @@ typedef struct ucc_tl_dpu_put_sync_t {
     uint16_t                 team_id;
     uint16_t                 create_new_team;
     ucc_datatype_t           dtype;
+    ucc_datatype_t           dtype;
     ucc_reduction_op_t       op;
     ucc_coll_type_t          coll_type;
     uint32_t                 count_total;
     uint32_t                 coll_id;
 } ucc_tl_dpu_put_sync_t;
 
+typedef struct ucc_tl_dpu_put_request {
+    ucs_status_ptr_t data_req;
+    ucs_status_ptr_t sync_req;
+    ucc_tl_dpu_put_sync_t sync_data;
+} ucc_tl_dpu_put_request_t;
+
+typedef struct ucc_tl_dpu_connect_s {
+    ucp_mem_map_params_t    mmap_params;
 typedef struct ucc_tl_dpu_put_request {
     ucs_status_ptr_t data_req;
     ucs_status_ptr_t sync_req;

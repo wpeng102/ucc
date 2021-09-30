@@ -179,7 +179,7 @@ void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 void dpu_comm_worker(void *arg)
 {
     thread_ctx_t *tctx_pool = (thread_ctx_t *)arg;
-    /* There is nthreads + 1 (main thread) in total. The last 
+    /* There are nthreads + 1 (main thread) in total. The last 
      * thread context in the pool is the main thread and it is consider 
      * the communication thread */
     int nthreads = tctx_pool[0].nthreads;
@@ -197,10 +197,9 @@ void dpu_comm_worker(void *arg)
         comm_thread_ctx->coll_sync.count_serviced = 0;
         comm_thread_ctx->buf_idx = 0;
 
+        CTX_LOG("Waiting for coll id: %d from host\n", ctx->coll_sync.coll_id);
         dpu_wait_for_next_coll(comm_thread_ctx);
 
-        fprintf(stderr, "got a new task from host: lsync->coll_id=%d and lsync->team_id=%d\n",
-                lsync->coll_id, lsync->team_id);
         unsigned int    coll_id     = lsync->coll_id;
         ucc_coll_type_t coll_type   = lsync->coll_type;
         size_t          count_total = lsync->count_total;
@@ -408,6 +407,7 @@ void *dpu_worker(void *arg)
         ctx->coll_sync.count_serviced = 0;
         ctx->buf_idx = 0;
 
+        CTX_LOG("Waiting for coll id: %d from comm thread\n", ctx->coll_sync.coll_id);
         dpu_waitfor_comm_thread(ctx, thread_main_sync);
 
         unsigned int coll_id      = lsync->coll_id;
@@ -515,14 +515,14 @@ int main(int argc, char **argv)
     tctx_pool[i].idx      = -1;
     tctx_pool[i].nthreads = nthreads;
     tctx_pool[i].hc       = hc;
-    //dpu_comm_worker((void*)&tctx_pool[i], tctx_pool);
-    dpu_comm_worker((void*)tctx_pool);
+    dpu_comm_worker((void*)&tctx_pool[i]);
 
     for(i = 0; i < nthreads; i++) {
         pthread_join(tctx_pool[i].id, NULL);
         dpu_ucc_free_team(&ucc_glob, &tctx_pool[i].comm);
     }
 
+    dpu_hc_finalize(hc);
     dpu_ucc_finalize(&ucc_glob);
     return 0;
 }
