@@ -129,15 +129,8 @@ static int _dpu_listen_cleanup(dpu_hc_t *hc)
     ucp_rkey_destroy(hc->sync_rkey);
 }
 
-ucc_status_t _dpu_req_test(ucs_status_ptr_t *request)
-=======
-    ucp_rkey_destroy(hc->src_rkey);
-    ucp_rkey_destroy(hc->dst_rkey);
-    ucp_rkey_destroy(hc->sync_rkey);
-}
 
 ucc_status_t _dpu_req_test(ucs_status_ptr_t request)
->>>>>>> sourav/dpu-pull
 {
     if (request == NULL) {
         return UCS_OK;
@@ -166,20 +159,8 @@ static ucs_status_t _dpu_ep_flush(dpu_hc_t *hc)
 
 static ucs_status_t _dpu_worker_flush(dpu_hc_t *hc)
 {
-    ucs_status_ptr_t request = ucp_worker_flush_nb(hc->ucp_worker, 0, _empty_cb);
-=======
-static ucs_status_t _dpu_ep_flush(dpu_hc_t *hc)
-{
-    ucp_request_param_t param = {};
-    ucs_status_ptr_t request = ucp_ep_flush_nbx(hc->host_ep, &param);
-    return _dpu_request_wait(hc->ucp_worker, request);
-}
-
-static ucs_status_t _dpu_worker_flush(dpu_hc_t *hc)
-{
     ucp_request_param_t param = {};
     ucs_status_ptr_t request = ucp_worker_flush_nbx(hc->ucp_worker, &param);
->>>>>>> sourav/dpu-pull
     return _dpu_request_wait(hc->ucp_worker, request);
 }
 
@@ -686,6 +667,7 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
 {
     ucs_status_t status;
     DPU_LOG("Flushing host ep for coll_id: %d\n", coll_sync->coll_id);
+    _dpu_worker_flush(hc);
 
     assert(hc->pipeline.sync_req == NULL);
     ucp_worker_fence(hc->ucp_worker);
@@ -770,9 +752,6 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *
             ucp_put_nbx(hc->host_ep, src_addr, data_size,
             (uint64_t)dst_addr, hc->dst_rkey, &hc->req_param);
 
-    stage->put.count = count;
-    hc->pipeline.count_put.issued += count;
-    hc->pipeline.inflight.put++;
     stage->put.count = count;
     hc->pipeline.count_put.issued += count;
     hc->pipeline.inflight.put++;
@@ -903,4 +882,17 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
         }
     }
     return UCS_OK;
+}
+
+int dpu_hc_finalize(dpu_hc_t *hc)
+{
+    _dpu_ep_flush(hc);
+    _dpu_worker_flush(hc);
+    _dpu_listen_cleanup(hc);
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.in);
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.out);
+    _dpu_hc_buffer_free(hc, &hc->mem_segs.sync);
+    _dpu_ep_close(hc);
+    _dpu_ucx_fini(hc);
+    return UCC_OK;
 }

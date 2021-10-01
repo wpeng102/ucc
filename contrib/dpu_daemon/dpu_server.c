@@ -515,7 +515,7 @@ int main(int argc, char **argv)
     tctx_pool[i].idx      = -1;
     tctx_pool[i].nthreads = nthreads;
     tctx_pool[i].hc       = hc;
-    dpu_comm_worker((void*)&tctx_pool[i]);
+    dpu_comm_worker((void*)tctx_pool);
 
     for(i = 0; i < nthreads; i++) {
         pthread_join(tctx_pool[i].id, NULL);

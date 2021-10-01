@@ -393,9 +393,9 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
         return UCC_OK;
     }
 
-    assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
-    assert(task->get_sync.coll_id == task->put_sync.coll_id);
-    assert(task->get_sync.count_serviced == task->put_sync.count_total);
+    //assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
+    //assert(task->get_sync.coll_id == task->put_sync.coll_id);
+    //assert(task->get_sync.count_serviced == task->put_sync.count_total);
     task->status = UCC_TL_DPU_TASK_STATUS_FINALIZED;
     ucc_tl_dpu_finalize_rkeys(task);
     ucc_mpool_put(task);

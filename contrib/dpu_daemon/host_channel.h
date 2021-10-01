@@ -225,6 +225,3 @@ ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request
 
     
 #endif
-=======
-#endif
->>>>>>> sourav/dpu-pull
