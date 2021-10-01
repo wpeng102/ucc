@@ -323,7 +323,6 @@ static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
 {
     int i, ret;
 
-    fprintf(stderr, "buffer_size: %lu, num_buffers: %lu\n", hc->pipeline.buffer_size, hc->pipeline.num_buffers);
     assert(hc->pipeline.buffer_size > 0);
     assert(hc->pipeline.num_buffers > 0);
 

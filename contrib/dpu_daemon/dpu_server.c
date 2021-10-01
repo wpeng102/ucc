@@ -217,7 +217,7 @@ void dpu_comm_worker(void *arg)
                 /* signal is new comm create 
                  * mirror host team in dpu world */
 
-                fprintf(stderr, "received team_mirroring_signal with comm_thread_ctx->coll_sync.coll_id = %d \n",
+                CTX_LOG("received team_mirroring_signal with comm_thread_ctx->coll_sync.coll_id = %d \n",
                         comm_thread_ctx->coll_sync.coll_id);
                 
                 /* 
@@ -266,7 +266,7 @@ void dpu_comm_worker(void *arg)
                     ucp_request_free(status_ptr);
                 }
                 
-                fprintf(stderr, "got the rank list from host \n");
+                CTX_LOG("got the rank list from host \n");
 
                 /* Now we have the rank list in comm world available  */
 
@@ -318,7 +318,7 @@ void dpu_comm_worker(void *arg)
                     ctx->comm.team_pool[team_id] = new_team; 
                 }
                 
-                fprintf(stderr, "created all the new teams  \n" );
+                CTX_LOG("created all the new teams  \n" );
 
                 continue;
 
@@ -334,7 +334,7 @@ void dpu_comm_worker(void *arg)
                 /* releasing a subcomm's team that was already created
                  * on the dpu world */
 
-                fprintf(stderr, "received team_releasing_signal with "
+                CTX_LOG("received team_releasing_signal with "
                         "comm_thread_ctx->coll_sync.coll_id = %d and team_id ="
                         " %d \n",
                         comm_thread_ctx->coll_sync.coll_id, team_id);
@@ -369,7 +369,7 @@ void dpu_comm_worker(void *arg)
                     ctx->comm.team_pool[team_id] = NULL; 
                 }
 
-                fprintf(stderr, "destroyed all teams with  team_id = %d \n", team_id);
+                CTX_LOG("destroyed all teams with  team_id = %d \n", team_id);
 
                 continue;
             }
