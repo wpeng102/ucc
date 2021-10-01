@@ -21,9 +21,6 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
         return team->status;
     }
 
-    fprintf(stderr, "team->super.super.team->ctx_ranks[0]=%d, team->super.super.team->ctx_ranks[1]=%d\n",
-            team->super.super.team->ctx_ranks[0], team->super.super.team->ctx_ranks[1]);
-
     ucc_tl_dpu_rkey_t *rank_list_rkey = &team->ctx_rank_rkey;
 
     ucc_tl_dpu_put_sync_t              team_mirroring_signal;
