@@ -61,7 +61,7 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
 
 
     tl_info(ctx->super.super.lib, "sending team_mirroring_signal to dpu team, "
-            "coll id = %u", team_mirroring_signal.coll_id);
+            "coll id = %u and ctx->coll_id_completed=%d ", team_mirroring_signal.coll_id, ctx->coll_id_completed);
 
     /* TODO  get the remote addr/ key rem_ctrl_seg/rem_ctrl_seg_key from the world team */
 
@@ -80,12 +80,15 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
     while((ucc_tl_dpu_req_test(&team_mirroring_signal_req, ctx->ucp_worker) != UCC_OK)) {
         ucp_worker_progress(ctx->ucp_worker);
     }
-    tl_info(ctx->super.super.lib, "sent team_mirroring_signal to dpu team"); 
+    ctx->coll_id_completed++;
+    team->coll_id_completed = ctx->coll_id_completed;
+
+    tl_info(ctx->super.super.lib, "sent team_mirroring_signal to dpu team with ctx->coll_id_completed=%d",
+            ctx->coll_id_completed); 
 
     team->status = UCC_OK;
 
-    ctx->coll_id_completed++;
-    team->coll_id_completed = ctx->coll_id_completed;
+
 
     return team->status;
 
@@ -341,6 +344,12 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
         ucp_worker_progress(ctx->ucp_worker);
     }
     tl_info(ctx->super.super.lib, "sent hangup/team_free to dpu team");
+
+    ucp_request_param_t param = {};
+    ucs_status_ptr_t request = ucp_worker_flush_nbx(ctx->ucp_worker, &param);
+    while((ucc_tl_dpu_req_test(&request, ctx->ucp_worker) != UCC_OK)) {
+        ucp_worker_progress(ctx->ucp_worker);
+    }
  
     if (team->super.super.team->id != 1) {
         /* destroying a team for a sub comm other than world  */
@@ -362,6 +371,8 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
         ucp_request_free(hangup_req);
     }
     
+    ctx->coll_id_completed++;
+    team->coll_id_completed = ctx->coll_id_completed;
     UCC_CLASS_DELETE_FUNC_NAME(ucc_tl_dpu_team_t)(tl_team);
 
     return UCC_OK;
