@@ -171,7 +171,7 @@ typedef struct dpu_hc_t {
         dpu_mem_t mem_segs_array[3];
     };
     /* Remote UCX stuff */
-    ucp_ep_h host_ep;
+    ucp_ep_h localhost_ep;
     uint64_t sync_addr;
     ucp_rkey_h src_rkey;
     ucp_rkey_h dst_rkey;
@@ -179,6 +179,10 @@ typedef struct dpu_hc_t {
 
     /* pipeline buffer */
     dpu_pipeline_t  pipeline;
+
+    /* remote eps */
+    ucp_ep_h *host_eps;
+    ucp_ep_h *dpu_eps;
 } dpu_hc_t;
 
 int dpu_hc_init(dpu_hc_t *dpu_hc);

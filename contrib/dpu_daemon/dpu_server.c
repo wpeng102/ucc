@@ -282,7 +282,7 @@ void dpu_comm_worker(void *arg)
                 ucp_rkey_h rkey;
                 ucs_status_t rstatus;
 
-                rstatus = ucp_ep_rkey_unpack(ctx->hc->host_ep,
+                rstatus = ucp_ep_rkey_unpack(ctx->hc->localhost_ep,
                         (void*)team_mirroring_signal->rkeys.rank_list_rkey,
                         &rkey);
 
@@ -292,7 +292,7 @@ void dpu_comm_worker(void *arg)
                 }
 
 
-                status_ptr = ucp_get_nbx(ctx->hc->host_ep, rank_list,
+                status_ptr = ucp_get_nbx(ctx->hc->localhost_ep, rank_list,
                         team_mirroring_signal->rkeys.rank_list_rkey_len,
                         (uintptr_t)((uint64_t*)team_mirroring_signal->rkeys.rank_list),
                         rkey,
