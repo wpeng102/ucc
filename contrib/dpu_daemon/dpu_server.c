@@ -125,6 +125,43 @@ static void dpu_coll_init_alltoall(thread_ctx_t *ctx, ucc_coll_req_h *request, s
     UCC_CHECK(ucc_collective_init(&coll, request, ctx->comm.team));
 }
 
+static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
+{
+    /* Only do in comm thread */
+    assert(ctx->idx == -1);
+    CTX_LOG("team id %d\n", lsync->team_id);
+
+    ucc_coll_req_h request;
+    ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+    unsigned int team_size = 0;
+    UCC_CHECK(ucc_team_get_size(team, &team_size));
+    void *src_buf = &lsync->rkeys;
+    void *dst_buf = calloc(team_size, sizeof(host_rkey_t));
+
+    ucc_coll_args_t coll = {
+        .coll_type = UCC_COLL_TYPE_ALLGATHER,
+        .src.info = {
+            .buffer   = src_buf,
+            .count    = sizeof(host_rkey_t),
+            .datatype = UCC_DT_OPAQUE,
+            .mem_type = UCC_MEMORY_TYPE_HOST,
+        },
+        .dst.info = {
+            .buffer   = dst_buf,
+            .count    = sizeof(host_rkey_t),
+            .datatype = UCC_DT_OPAQUE,
+            .mem_type = UCC_MEMORY_TYPE_HOST,
+        },
+    };
+
+    UCC_CHECK(ucc_collective_init(&coll, &request, team));
+    UCC_CHECK(ucc_collective_post(request));
+    while (UCC_OK != ucc_collective_test(request)) {
+        ucc_context_progress(ctx->comm.ctx);
+    }
+    UCC_CHECK(ucc_collective_finalize(request));
+}
+
 void dpu_waitfor_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync)
 {
     /* busy wait */
@@ -184,6 +221,7 @@ void dpu_comm_worker(void *arg)
      * the communication thread */
     int nthreads = tctx_pool[0].nthreads;
     thread_ctx_t *comm_thread_ctx = &tctx_pool[nthreads];
+    thread_ctx_t *ctx = comm_thread_ctx;
 
     dpu_put_sync_t *lsync = &tmp_sync; //comm_thread_ctx->hc->mem_segs.sync.base;
     assert(comm_thread_ctx->idx == -1);
@@ -208,8 +246,8 @@ void dpu_comm_worker(void *arg)
         
         assert(0 <= team_id && team_id < DPU_TEAM_POOL_SIZE);
         CTX_LOG(
-            "Start coll id: %u, type: %d, count total: %lu\n",
-            coll_id, coll_type, count_total);
+            "Start coll id: %u, type: %d, count total: %lu on team: %u\n",
+            coll_id, coll_type, count_total, team_id);
 
 
         if (coll_type == UCC_COLL_TYPE_LAST) {
@@ -291,7 +329,7 @@ void dpu_comm_worker(void *arg)
                 team_params.ep_map   = ucc_ep_map_from_array(&rank_list,
                         team_size, full_size, 0);
 
-                for (i = 0; i < nthreads; i++) {
+                for (i = 0; i <= nthreads; i++) {
                     /* Step 2 */
                     ctx = &(tctx_pool[i]);
                     new_team = NULL;
@@ -350,7 +388,7 @@ void dpu_comm_worker(void *arg)
                 ucc_team_h new_team = NULL;
                 ucc_status_t status = UCC_OK;
 
-                for (i = 0; i < nthreads; i++) {
+                for (i = 0; i <= nthreads; i++) {
 
                     ctx = &(tctx_pool[i]);
                     new_team = ctx->comm.team_pool[team_id]; 
@@ -375,6 +413,9 @@ void dpu_comm_worker(void *arg)
             }
         }
 
+        if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
+            dpu_coll_collect_host_rkeys(comm_thread_ctx, lsync);
+        }
         dpu_signal_comp_threads(comm_thread_ctx, thread_main_sync);
 
         dpu_pipeline_t *pipe = &comm_thread_ctx->hc->pipeline;
@@ -512,6 +553,7 @@ int main(int argc, char **argv)
     }
 
     /* The final DPU worker is executed in this context */
+    UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &tctx_pool[i].comm));
     tctx_pool[i].idx      = -1;
     tctx_pool[i].nthreads = nthreads;
     tctx_pool[i].hc       = hc;

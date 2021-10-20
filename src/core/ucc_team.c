@@ -530,3 +530,13 @@ static void ucc_team_relase_id(ucc_team_t *team)
         set_id_bit(ctx->ids.pool, team->id);
     }
 }
+
+ucc_status_t ucc_team_get_size(ucc_team_h team, uint32_t *size)
+{
+    if (NULL == team) {
+        ucc_error("ucc_team_get_size: invalid team handle: NULL");
+        return UCC_ERR_INVALID_PARAM;
+    }
+    *size = team->size;
+    return UCC_OK;
+}
