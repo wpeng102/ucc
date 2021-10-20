@@ -150,11 +150,17 @@ static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
             status, ucs_status_string(status));
 }
 
-static ucs_status_t _dpu_ep_flush(dpu_hc_t *hc)
+static ucs_status_t _dpu_flush_host_eps(dpu_hc_t *hc)
 {
+    int i;
     ucp_request_param_t param = {};
-    ucs_status_ptr_t request = ucp_ep_flush_nbx(hc->localhost_ep, &param);
-    return _dpu_request_wait(hc->ucp_worker, request);
+    ucs_status_ptr_t request;
+
+    for (i = 0; i < hc->world_size; i++) {
+        request = ucp_ep_flush_nbx(hc->localhost_ep, &param);
+        _dpu_request_wait(hc->ucp_worker, request);
+    }
+    return UCS_OK;
 }
 
 static ucs_status_t _dpu_worker_flush(dpu_hc_t *hc)
@@ -358,6 +364,8 @@ int dpu_hc_init(dpu_hc_t *hc)
     int ret = UCC_OK;
 
     memset(hc, 0, sizeof(*hc));
+    MPI_Comm_rank(MPI_COMM_WORLD, &hc->world_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &hc->world_size);
 
     /* Start listening */
     ret = _dpu_listen(hc);
@@ -380,53 +388,69 @@ out:
     return ret;
 }
 
-static ucs_status_t _dpu_ep_create (dpu_hc_t *hc, void *rem_worker_addr)
+static ucs_status_t _dpu_create_host_eps(dpu_hc_t *hc, void *rem_worker_addr, size_t rem_worker_addr_len)
 {
     ucs_status_t status;
     ucp_ep_params_t ep_params;
+    int i;
+    void *remote_addrs = NULL;
+
+    /* Connect to all remote hosts */
+    hc->host_eps = calloc(hc->world_size, sizeof(ucp_ep_h));
+    remote_addrs = calloc(hc->world_size, rem_worker_addr_len);
+    MPI_Allgather(rem_worker_addr, rem_worker_addr_len, MPI_BYTE,
+                  remote_addrs, rem_worker_addr_len, MPI_BYTE, MPI_COMM_WORLD);
 
     ep_params.field_mask    = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
                               UCP_EP_PARAM_FIELD_ERR_HANDLER |
                               UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
     ep_params.err_mode		= UCP_ERR_HANDLING_MODE_PEER;
     ep_params.err_handler.cb    = err_cb;
-    ep_params.address = rem_worker_addr;
 
-    status = ucp_ep_create(hc->ucp_worker, &ep_params, &hc->localhost_ep);
-    if (status != UCS_OK) {
-        fprintf(stderr, "failed to create an endpoint on the dpu (%s)\n",
-                ucs_status_string(status));
-        return UCC_ERR_NO_MESSAGE;
+    for (i = 0; i < hc->world_size; i++) {
+        ep_params.address = remote_addrs + i * rem_worker_addr_len;
+        status = ucp_ep_create(hc->ucp_worker, &ep_params, &hc->host_eps[i]);
+        if (status != UCS_OK) {
+            fprintf(stderr, "failed to create endpoint on dpu to host %d (%s)\n",
+                    i, ucs_status_string(status));
+            return UCC_ERR_NO_MESSAGE;
+        }
     }
 
+    hc->localhost_ep = hc->host_eps[hc->world_rank];
     memset(&hc->req_param, 0, sizeof(hc->req_param));
     return UCC_OK;
 }
 
-static int _dpu_ep_close(dpu_hc_t *hc)
+static int _dpu_close_host_eps(dpu_hc_t *hc)
 {
     ucp_request_param_t param;
     ucs_status_t status;
     void *close_req;
     int ret = UCC_OK;
+    int i;
 
     param.op_attr_mask  = UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = UCP_EP_CLOSE_FLAG_FORCE;
-    close_req           = ucp_ep_close_nbx(hc->localhost_ep, &param);
-    if (UCS_PTR_IS_PTR(close_req)) {
-        do {
-            ucp_worker_progress(hc->ucp_worker);
-            status = ucp_request_check_status(close_req);
-        } while (status == UCS_INPROGRESS);
 
-        ucp_request_free(close_req);
-    } else if (UCS_PTR_STATUS(close_req) != UCS_OK) {
-        fprintf(stderr, "failed to close ep %p\n", (void *)hc->localhost_ep);
-        ret = UCC_ERR_NO_MESSAGE;
+    for (i = 0; i < hc->world_size; i++) {
+        close_req = ucp_ep_close_nbx(hc->host_eps[i], &param);
+        if (UCS_PTR_IS_PTR(close_req)) {
+            do {
+                ucp_worker_progress(hc->ucp_worker);
+                status = ucp_request_check_status(close_req);
+            } while (status == UCS_INPROGRESS);
+
+            ucp_request_free(close_req);
+        }
+        else if (UCS_PTR_STATUS(close_req) != UCS_OK) {
+            fprintf(stderr, "failed to close ep %p\n", (void *)hc->host_eps[i]);
+            ret = UCC_ERR_NO_MESSAGE;
+        }
     }
+    free(hc->host_eps);
     return ret;
 }
-
 
 ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request)
 {
@@ -596,8 +620,8 @@ int dpu_hc_accept(dpu_hc_t *hc)
         goto err;
     }
 
-    if (ret = _dpu_ep_create(hc, rem_worker_addr)) {
-        fprintf(stderr, "dpu_create_ep failed!\n");
+    if (ret = _dpu_create_host_eps(hc, rem_worker_addr, rem_worker_addr_len)) {
+        fprintf(stderr, "_dpu_create_host_eps failed!\n");
         ret = UCC_ERR_NO_MESSAGE;
         goto err;
     }
@@ -630,8 +654,7 @@ int dpu_hc_accept(dpu_hc_t *hc)
         goto err;
     }
 
-
-    ret = _dpu_ep_flush(hc);
+    ret = _dpu_flush_host_eps(hc);
     if (ret) {
         fprintf(stderr, "ep flush failed!\n");
         goto err;
@@ -885,13 +908,13 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
 
 int dpu_hc_finalize(dpu_hc_t *hc)
 {
-    _dpu_ep_flush(hc);
+    _dpu_flush_host_eps(hc);
     _dpu_worker_flush(hc);
     _dpu_listen_cleanup(hc);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.in);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.out);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.sync);
-    _dpu_ep_close(hc);
+    _dpu_close_host_eps(hc);
     _dpu_ucx_fini(hc);
     return UCC_OK;
 }
