@@ -185,6 +185,9 @@ typedef struct dpu_hc_t {
     int world_size;
     ucp_ep_h *host_eps;
     ucp_ep_h *dpu_eps;
+    host_rkey_t *host_rkeys;
+    ucp_rkey_h *host_src_rkeys;
+    ucp_rkey_h *host_dst_rkeys;
 } dpu_hc_t;
 
 int dpu_hc_init(dpu_hc_t *dpu_hc);

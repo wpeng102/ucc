@@ -23,7 +23,6 @@ size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED] = {
     [UCC_DT_UINT128] = 16,
 };
 
-ucs_status_t _dpu_request_wait (ucp_worker_h ucp_worker, ucs_status_ptr_t request);
                                   
 size_t dpu_ucc_dt_size(ucc_datatype_t dt)
 {
@@ -418,6 +417,9 @@ static ucs_status_t _dpu_create_host_eps(dpu_hc_t *hc, void *rem_worker_addr, si
     }
 
     hc->localhost_ep = hc->host_eps[hc->world_rank];
+    hc->host_rkeys = calloc(hc->world_size, sizeof(host_rkey_t));
+    hc->host_src_rkeys = calloc(hc->world_size, sizeof(ucp_rkey_h));
+    hc->host_dst_rkeys = calloc(hc->world_size, sizeof(ucp_rkey_h));
     memset(&hc->req_param, 0, sizeof(hc->req_param));
     return UCC_OK;
 }
@@ -449,6 +451,9 @@ static int _dpu_close_host_eps(dpu_hc_t *hc)
         }
     }
     free(hc->host_eps);
+    free(hc->host_rkeys);
+    free(hc->host_src_rkeys);
+    free(hc->host_dst_rkeys);
     return ret;
 }
 
