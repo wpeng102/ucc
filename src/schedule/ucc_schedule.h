@@ -143,6 +143,7 @@ static inline ucc_status_t ucc_task_complete(ucc_coll_task_t *task)
     }
 
     if (task->flags & UCC_COLL_TASK_FLAG_INTERNAL) {
+        ucc_info("ucc_task_complete: %p", task);
         task->finalize(task);
     }
     return status;

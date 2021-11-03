@@ -335,7 +335,7 @@ static inline ucc_status_t ucc_team_exchange(ucc_context_t *context,
         oob.req_free(team->oob_req);
         ucc_assert(team->size >= 2);
         team->ctx_map = ucc_ep_map_from_array(&team->ctx_ranks, team->size,
-                                              context->addr_storage.size, 1);
+                                              context->addr_storage.size, 0);
     }
     ucc_debug("team %p rank %d, ctx_rank %d, map_type %d", team, team->rank,
               context->rank, team->ctx_map.type);

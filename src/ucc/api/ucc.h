@@ -15,6 +15,8 @@
 #include <ucc/api/ucc_status.h>
 #include <stdio.h>
 
+typedef uint32_t ucc_rank_t;
+
 BEGIN_C_DECLS
 
 /** Unified Collective Communications (UCC) Library Specification
@@ -1991,6 +1993,12 @@ ucc_status_t ucc_ee_wait(ucc_ee_h ee, ucc_ev_t *ev);
  * @return Error code as defined by @ref ucc_status_t
  */
 ucc_status_t ucc_collective_triggered_post(ucc_ee_h ee, ucc_ev_t *ee_event);
+
+
+
+ucc_ep_map_t ucc_ep_map_from_array(ucc_rank_t **array, ucc_rank_t size,
+                                   ucc_rank_t full_size, int need_free);
+
 
 END_C_DECLS
 #endif

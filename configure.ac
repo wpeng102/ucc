@@ -141,6 +141,7 @@ AS_IF([test "x$with_docs_only" = xyes],
      AM_CONDITIONAL([HAVE_UCX], [false])
      AM_CONDITIONAL([HAVE_CUDA], [false])
      AM_CONDITIONAL([HAVE_NCCL], [false])
+     AM_CONDITIONAL([HAVE_DPU], [false])
      AM_CONDITIONAL([HAVE_SHARP], [false])
      AM_CONDITIONAL([HAVE_MPI], [false])
      AM_CONDITIONAL([HAVE_MPIRUN], [false])
@@ -156,6 +157,7 @@ AS_IF([test "x$with_docs_only" = xyes],
      m4_include([config/m4/ucx.m4])
      m4_include([config/m4/cuda.m4])
      m4_include([config/m4/nccl.m4])
+     m4_include([config/m4/dpu.m4])
      m4_include([config/m4/sharp.m4])
      m4_include([config/m4/mpi.m4])
      m4_include([config/m4/configure.m4])
@@ -190,6 +192,12 @@ AS_IF([test "x$with_docs_only" = xyes],
      if test $sharp_happy = "yes"; then
          tl_modules="${tl_modules}:sharp"
      fi
+
+     CHECK_DPU
+     AC_MSG_RESULT([NCCL support: $dpu_happy])
+     if test $dpu_happy = "yes"; then
+         tl_modules="${tl_modules}:dpu"
+     fi
     ]) # Docs only
 
 CFLAGS="$CFLAGS -std=gnu11"
@@ -205,6 +213,7 @@ AC_CONFIG_FILES([
                  src/components/cl/hier/Makefile
                  src/components/tl/ucp/Makefile
                  src/components/tl/nccl/Makefile
+                 src/components/tl/dpu/Makefile
                  src/components/tl/sharp/Makefile
                  src/components/mc/cpu/Makefile
                  src/components/mc/cuda/Makefile
