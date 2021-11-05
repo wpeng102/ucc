@@ -105,54 +105,53 @@ typedef struct dpu_mem_segs_t {
     dpu_mem_t out;
 } dpu_mem_segs_t;
 
-typedef enum dpu_pipeline_stage_state_t {
+typedef enum dpu_buf_phase_t {
+    INIT,
+    REDUCE,
+    BCAST,
+} dpu_buf_phase_t;
+
+typedef enum dpu_buf_state_t {
     FREE,
     IN_PROGRESS,
-    DONE,
-} dpu_pipeline_stage_state_t;
+    IDLE,
+} dpu_buf_state_t;
 
-typedef struct dpu_pipeline_stage_t {
-    volatile dpu_pipeline_stage_state_t state;
-    void                      *buf;
-    ucs_status_ptr_t           ucp_req;
-    volatile size_t            count;
-} dpu_pipeline_stage_t;
+typedef struct op_count_t {
+    int issued_ops;
+    int done_ops;
+} op_count_t;
 
-typedef struct dpu_stage_t {
-    dpu_pipeline_stage_t get;
-    dpu_pipeline_stage_t ar;
-    dpu_pipeline_stage_t put;
-} dpu_stage_t;
+typedef struct elem_count_t {
+    size_t issued_elems;
+    size_t done_elems;
+} elem_count_t;
 
-typedef struct inflight_t {
-    volatile int get;
-    volatile int put;
-    volatile int ar;
-} inflight_t;
-
-typedef struct cur_idx_t {
-    volatile int get;
-    volatile int put;
-    volatile int ar;
-} cur_idx_t;
-
-typedef struct count_t {
-    volatile size_t issued;
-    volatile size_t done;
-} count_t;
+typedef struct dpu_buf_t {
+    volatile dpu_buf_phase_t    phase;
+    volatile dpu_buf_state_t    state;
+    void                       *buf;
+    ucs_status_ptr_t            ucp_req;
+    size_t                      count;
+    op_count_t                  get, red, put;
+} dpu_buf_t;
 
 typedef struct dpu_pipeline_t {
-    dpu_stage_t         stage[2];
-    inflight_t          inflight;
-    cur_idx_t           idx;
-
     size_t              buffer_size;
     size_t              num_buffers;
     ucs_status_ptr_t    sync_req;
 
-    count_t count_get;
-    count_t count_red;
-    count_t count_put;
+    volatile int get_idx;
+    volatile int acc_idx;
+    volatile int red_idx;
+    volatile int put_idx;
+    dpu_buf_t    getbuf[2];
+    dpu_buf_t    accbuf[2];
+    elem_count_t get, red, put;
+    int          src_rank;
+    int          dst_rank;
+    size_t       my_count;
+    size_t       my_offset;
 } dpu_pipeline_t;
 
 typedef struct dpu_hc_t {
@@ -213,6 +212,7 @@ typedef struct thread_sync_t {
     volatile unsigned int pad1[15]; /* pad to 64bytes */
     volatile unsigned int done;     /* second cache line */
     volatile unsigned int pad2[15]; /* pad to 64 bytes */
+    int acc_idx, get_idx;
 } thread_sync_t;
 
 extern thread_sync_t *thread_main_sync;

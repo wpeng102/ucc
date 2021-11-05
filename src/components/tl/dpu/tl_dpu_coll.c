@@ -197,6 +197,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
     ucc_tl_dpu_team_t *team = task->team;
     ucc_status_t status;
 
+    // tl_info(UCC_TL_TEAM_LIB(task->team), "task status %d coll id %d", task->status, task->put_sync.coll_id);
     if (task->status == UCC_TL_DPU_TASK_STATUS_INIT && task->put_sync.coll_id == team->coll_id_completed + 1) {
         tl_info(UCC_TL_TEAM_LIB(task->team), "Put to DPU coll task: %p, coll id %d", task, task->put_sync.coll_id);
         status = ucc_tl_dpu_issue_put(task, ctx, team);

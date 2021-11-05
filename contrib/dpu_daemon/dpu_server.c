@@ -44,6 +44,9 @@ static void dpu_thread_set_affinity(thread_ctx_t *ctx)
 
 static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, size_t *count_p, dpu_put_sync_t *lsync)
 {
+    *request = NULL;
+
+#if 0
     int ar_idx = ctx->buf_idx;
     dpu_stage_t *ar_stage = &ctx->hc->pipeline.stage[ar_idx];
     assert(ar_stage->get.state == DONE);
@@ -95,6 +98,7 @@ static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, 
 
     UCC_CHECK(ucc_collective_init(&coll, request, ctx->comm.team_pool[lsync->team_id]));
     assert(*request != NULL);
+#endif
 }
 
 static void dpu_coll_init_alltoall(thread_ctx_t *ctx, ucc_coll_req_h *request, size_t *count_p, dpu_put_sync_t *lsync)
@@ -179,10 +183,36 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
         assert(0    <  hc->host_rkeys[i].src_rkey_len);
         assert(0    <  hc->host_rkeys[i].dst_rkey_len);
         status = ucp_ep_rkey_unpack(hc->host_eps[i], (void*)hc->host_rkeys[i].src_rkey_buf, &hc->host_src_rkeys[i]);
-        status = ucp_ep_rkey_unpack(hc->host_eps[i], (void*)hc->host_rkeys[i].dst_rkey_buf, &hc->host_dst_rkeys[i]);
+        assert(UCS_OK == status);
         assert(NULL != hc->host_rkeys[i].src_buf);
+        status = ucp_ep_rkey_unpack(hc->host_eps[i], (void*)hc->host_rkeys[i].dst_rkey_buf, &hc->host_dst_rkeys[i]);
+        assert(UCS_OK == status);
         assert(NULL != hc->host_rkeys[i].dst_buf);
+        CTX_LOG("Rank %d src buf %p dst buf %p\n", i, hc->host_rkeys[i].src_buf, hc->host_rkeys[i].dst_buf);
     }
+}
+
+static void dpu_coll_do_barrier(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
+{
+    /* Only do in comm thread */
+    assert(ctx->idx == -1);
+
+    ucs_status_t status;
+    ucc_coll_req_h request;
+    ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+
+    ucc_coll_args_t coll = {
+        .mask = 0,
+        .coll_type = UCC_COLL_TYPE_BARRIER,
+    };
+
+    CTX_LOG("Issue Synchronizing Barrier on team %d\n", lsync->team_id);
+    UCC_CHECK(ucc_collective_init(&coll, &request, team));
+    UCC_CHECK(ucc_collective_post(request));
+    while (UCC_OK != ucc_collective_test(request)) {
+        ucc_context_progress(ctx->comm.ctx);
+    }
+    UCC_CHECK(ucc_collective_finalize(request));
 }
 
 static void dpu_coll_free_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
@@ -346,6 +376,7 @@ void dpu_comm_worker(void *arg)
     int nthreads = tctx_pool[0].nthreads;
     thread_ctx_t *comm_thread_ctx = &tctx_pool[nthreads];
     thread_ctx_t *ctx = comm_thread_ctx;
+    dpu_hc_t *hc = ctx->hc;
 
     dpu_put_sync_t *lsync = &tmp_sync; //comm_thread_ctx->hc->mem_segs.sync.base;
     assert(comm_thread_ctx->idx == -1);
@@ -487,8 +518,8 @@ void dpu_comm_worker(void *arg)
             } else if (team_id == 1) {
 
                 /* World team free so Hang up */
-                dpu_signal_comp_threads(comm_thread_ctx,
-                        thread_main_sync);
+                dpu_signal_comp_threads(comm_thread_ctx, thread_main_sync);
+                dpu_mark_coll_done(comm_thread_ctx, lsync);
                 break;
 
             } else {
@@ -539,28 +570,34 @@ void dpu_comm_worker(void *arg)
 
         if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
             dpu_coll_collect_host_rkeys(comm_thread_ctx, lsync);
-            dpu_coll_blocking_allreduce(comm_thread_ctx, lsync);
-            comm_thread_ctx->hc->pipeline.count_put.done = count_total;
-        }
-        #if 0
-        dpu_signal_comp_threads(comm_thread_ctx, thread_main_sync);
 
-        dpu_pipeline_t *pipe = &comm_thread_ctx->hc->pipeline;
-        while (pipe->count_put.done < count_total) {
-            dpu_hc_issue_get(comm_thread_ctx->hc, lsync, comm_thread_ctx);
-            dpu_hc_issue_allreduce(comm_thread_ctx->hc, lsync, comm_thread_ctx);
-            dpu_hc_issue_put(comm_thread_ctx->hc, lsync, comm_thread_ctx);
-            dpu_hc_progress(comm_thread_ctx->hc, lsync, comm_thread_ctx);
-        }
+            size_t dt_size   = dpu_ucc_dt_size(lsync->dtype);
+            hc->pipeline.my_count  = lsync->count_total / hc->world_size;
+            hc->pipeline.my_offset = hc->pipeline.my_count * dt_size * hc->world_rank;
+            if (hc->world_rank == hc->world_size - 1) {
+                hc->pipeline.my_count += lsync->count_total % hc->world_size;
+            }
 
-        CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n", coll_id, coll_type);
-        dpu_waitfor_comp_threads(comm_thread_ctx, thread_main_sync);
-        #endif
-        dpu_mark_coll_done(comm_thread_ctx, lsync);
-        CTX_LOG("End coll id: %u, type: %d, count total: %lu, count serviced: %zu\n",
-                coll_id, coll_type, count_total, (size_t)comm_thread_ctx->coll_sync.count_serviced);
+            dpu_signal_comp_threads(comm_thread_ctx, thread_main_sync);
+            while (hc->pipeline.put.done_elems < hc->pipeline.my_count) {
+                dpu_hc_issue_get(comm_thread_ctx->hc, lsync, comm_thread_ctx);
+                dpu_hc_issue_allreduce(comm_thread_ctx->hc, lsync, comm_thread_ctx);
+                dpu_hc_issue_put(comm_thread_ctx->hc, lsync, comm_thread_ctx);
+                dpu_hc_progress(comm_thread_ctx->hc, lsync, comm_thread_ctx);
+            }
 
-        if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
+            CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n",
+                    coll_id, coll_type);
+            dpu_waitfor_comp_threads(comm_thread_ctx, thread_main_sync);
+
+            CTX_LOG("Waiting for all ranks to complete coll id: %u, type: %d\n",
+                    coll_id, coll_type);
+            dpu_coll_do_barrier(comm_thread_ctx, lsync);
+
+            dpu_mark_coll_done(comm_thread_ctx, lsync);
+            CTX_LOG("End coll id: %u, type: %d, count total: %lu, count serviced: %zu\n",
+                    coll_id, coll_type, count_total, (size_t)comm_thread_ctx->coll_sync.count_serviced);
+
             dpu_coll_free_host_rkeys(comm_thread_ctx, lsync);
         }
     }
@@ -596,34 +633,25 @@ void *dpu_worker(void *arg)
 
         /* Process all data */
         do {
+            CTX_LOG("Waiting for more data from comm thread\n");
             dpu_waitfor_comm_thread(ctx, thread_sub_sync);
+            assert(UCC_COLL_TYPE_ALLREDUCE == lsync->coll_type);
+            assert(UCC_OP_SUM == lsync->op);
+            assert(UCC_DT_INT32 == lsync->dtype);
 
-            if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
-                dpu_coll_init_allreduce(ctx, &request, &count_serviced, lsync);
-            } else if (coll_type == UCC_COLL_TYPE_ALLTOALL) {
-                dpu_coll_init_alltoall(ctx, &request, &count_serviced, lsync);
-            } else if (coll_type == UCC_COLL_TYPE_LAST) {
-                CTX_LOG("Received hangup, exiting loop\n");
-                break;
-            } else {
-                CTX_LOG("Unsupported coll type: %d\n", coll_type);
+            dpu_pipeline_t *pipe = &ctx->hc->pipeline;
+            int acc_idx = thread_sub_sync->acc_idx;
+            int get_idx = thread_sub_sync->get_idx;
+            size_t count = pipe->accbuf[acc_idx].count;
+            int32_t *accbuf = pipe->accbuf[acc_idx].buf;
+            int32_t *getbuf = pipe->getbuf[get_idx].buf;
+            for (int k = 0; k < count; k++) {
+                accbuf[k] += getbuf[k];
             }
-
-            if (request != NULL) {
-                CTX_LOG("Posting coll id: %d\n", coll_id);
-                UCC_CHECK(ucc_collective_post(request));
-                while (UCC_OK != ucc_collective_test(request)) {
-                    ucc_context_progress(ctx->comm.ctx);
-                }
-                CTX_LOG("Finalizing coll id: %d\n", coll_id);
-                UCC_CHECK(ucc_collective_finalize(request));
-            }
-
-            ctx->buf_idx = (ctx->buf_idx + 1) % ctx->hc->pipeline.num_buffers;
-            ctx->coll_sync.count_serviced += count_serviced;
-
-            CTX_LOG("Progressed coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
-                coll_id, coll_type, count_total, (size_t)ctx->coll_sync.count_serviced);
+            ctx->coll_sync.count_serviced += count * ctx->hc->world_size;
+            CTX_LOG("DATA accbuf[%d] %ld getbuf[%d] %ld\n", acc_idx, accbuf[1], get_idx, getbuf[1]);
+            CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
+                    count, ctx->coll_sync.count_serviced, count_total);
             dpu_signal_comm_thread(ctx, thread_sub_sync);
 
         } while (ctx->coll_sync.count_serviced < count_total);

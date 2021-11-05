@@ -156,7 +156,7 @@ static ucs_status_t _dpu_flush_host_eps(dpu_hc_t *hc)
     ucs_status_ptr_t request;
 
     for (i = 0; i < hc->world_size; i++) {
-        request = ucp_ep_flush_nbx(hc->localhost_ep, &param);
+        request = ucp_ep_flush_nbx(hc->host_eps[i], &param);
         _dpu_request_wait(hc->ucp_worker, request);
     }
     return UCS_OK;
@@ -291,37 +291,30 @@ static int _dpu_hc_buffer_free(dpu_hc_t *hc, dpu_mem_t *mem)
     free(mem->base);
 }
 
-static void _dpu_hc_reset_stage(dpu_stage_t *stage)
+op_count_t zero_op = {};
+elem_count_t zero_elem = {};
+
+static void _dpu_hc_reset_buf(dpu_buf_t *buf)
 {
-    stage->get.count = 0;
-    stage->put.count = 0;
-    stage->ar.count  = 0;
-    stage->get.state = FREE;
-    stage->put.state = FREE;
-    stage->ar.state  = FREE;
-    stage->get.ucp_req = NULL;
-    stage->put.ucp_req = NULL;
+    buf->phase = INIT;
+    buf->state = FREE;
+    buf->count = 0;
+    buf->ucp_req = NULL;
+    buf->get = buf->red = buf->put = zero_op;
 }
 
 static void _dpu_hc_reset_pipeline(dpu_hc_t *hc)
 {
-    int i;
     dpu_pipeline_t *pipe = &hc->pipeline;
-    pipe->count_get.done   = 0;
-    pipe->count_get.issued = 0;
-    pipe->count_put.done   = 0;
-    pipe->count_put.issued = 0;
-    pipe->count_red.done   = 0;
-    pipe->count_red.issued = 0;
-    pipe->idx.get = 0;
-    pipe->idx.put = 0;
-    pipe->idx.ar  = 0;
-    pipe->inflight.get = 0;
-    pipe->inflight.put = 0;
-    pipe->inflight.ar  = 0;
-    for (i=0; i<pipe->num_buffers; i++) {
-        _dpu_hc_reset_stage(&pipe->stage[i]);
-    }
+    pipe->get_idx = 0;
+    pipe->acc_idx = 0;
+    pipe->red_idx = 0;
+    pipe->src_rank = pipe->dst_rank = hc->world_rank; // FIXME team rank
+    pipe->get = pipe->red = pipe->put = zero_elem;
+    _dpu_hc_reset_buf(&pipe->getbuf[0]);
+    _dpu_hc_reset_buf(&pipe->getbuf[1]);
+    _dpu_hc_reset_buf(&pipe->accbuf[0]);
+    _dpu_hc_reset_buf(&pipe->accbuf[1]);
 }
 
 static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
@@ -345,10 +338,11 @@ static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
     }
 
     for (i=0; i<hc->pipeline.num_buffers; i++) {
-        hc->pipeline.stage[i].get.buf = (char *)hc->mem_segs.in.base  + hc->pipeline.buffer_size * i;
-        hc->pipeline.stage[i].put.buf = (char *)hc->mem_segs.out.base + hc->pipeline.buffer_size * i;
+        hc->pipeline.getbuf[i].buf = (char *)hc->mem_segs.in.base  + hc->pipeline.buffer_size * i;
+        hc->pipeline.accbuf[i].buf = (char *)hc->mem_segs.out.base + hc->pipeline.buffer_size * i;
     }
 
+    _dpu_hc_reset_pipeline(hc);
     goto out;
 err_get:
     _dpu_hc_buffer_free(hc, &hc->mem_segs.out);
@@ -717,98 +711,111 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
 
 ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx)
 {
-    int get_idx = hc->pipeline.idx.get;
-    dpu_stage_t *stage = &hc->pipeline.stage[get_idx];
-    dpu_pipeline_stage_state_t get_state = stage->get.state;
-    size_t remaining = sync->count_total - hc->pipeline.count_get.issued;
-    if (get_state != FREE || remaining <= 0) {
+    dpu_buf_t *getbuf = NULL;
+    int get_elems = hc->pipeline.get.issued_elems;
+    if (get_elems > 0) {
+        getbuf = &hc->pipeline.getbuf[hc->pipeline.get_idx];
+    } else {
+        getbuf = &hc->pipeline.accbuf[hc->pipeline.acc_idx];
+    }
+    if (getbuf->state != FREE) {
         return UCS_ERR_NO_RESOURCE;
     }
-    assert(stage->ar.state != IN_PROGRESS);
-    stage->get.state = IN_PROGRESS;
-    hc->pipeline.idx.get = (get_idx + 1) % hc->pipeline.num_buffers;
-
     size_t dt_size = dpu_ucc_dt_size(sync->dtype);
-    size_t max_elems = hc->pipeline.buffer_size/dt_size;
-    size_t count = DPU_MIN(max_elems, remaining);
+    size_t remaining_elems = hc->pipeline.my_count - hc->pipeline.get.done_elems;
+    size_t count = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
+    size_t get_offset = hc->pipeline.my_offset + hc->pipeline.get.done_elems * dt_size;
+    int src_rank = hc->pipeline.src_rank;
+
+    if (0 == count) {
+        return UCS_ERR_NO_RESOURCE;
+    }
+    getbuf->count = count;
+    getbuf->state = IN_PROGRESS;
+    getbuf->get.issued_ops += 1;
+    hc->pipeline.get.issued_elems += count;
+
     size_t data_size = count * dt_size;
-    void *src_addr = sync->rkeys.src_buf + hc->pipeline.count_get.issued * dt_size;
-    void *dst_addr = stage->get.buf;
+    void *src_addr = hc->host_rkeys[src_rank].src_buf + get_offset;
+    void *dst_addr = getbuf->buf;
 
-    DPU_LOG("Issue Get idx %d count %lu total issued %zu src %p dst %p bytes %lu\n",
-            get_idx, count, hc->pipeline.count_get.issued, src_addr, dst_addr, data_size);
-    assert(count > 0);
-    assert(stage->get.ucp_req == NULL);
-
+    DPU_LOG("Issue Get from %d offset %lu src %p dst %p count %lu bytes %lu\n",
+            src_rank, get_offset, src_addr, dst_addr, count, data_size);
+    assert(count > 0 && dt_size > 0 && getbuf->ucp_req == NULL);
+    
     ucp_worker_fence(hc->ucp_worker);
-    stage->get.ucp_req =
-            ucp_get_nbx(hc->localhost_ep, dst_addr, data_size,
-            (uint64_t)src_addr, hc->src_rkey, &hc->req_param);
-
-    stage->get.count = count;
-    hc->pipeline.count_get.issued += count;
-    hc->pipeline.inflight.get++;
+    getbuf->ucp_req =
+            ucp_get_nbx(hc->host_eps[src_rank], dst_addr, data_size,
+            (uint64_t)src_addr, hc->host_src_rkeys[src_rank], &hc->req_param);
+    
+    hc->pipeline.src_rank = (src_rank + 1) % hc->world_size; // FIXME team size
     return UCS_OK;
 }
 
 ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx)
 {
-    int put_idx = hc->pipeline.idx.put;
-    dpu_stage_t *stage = &hc->pipeline.stage[put_idx];
-    dpu_pipeline_stage_state_t ar_state  = stage->ar.state;
-    dpu_pipeline_stage_state_t put_state = stage->put.state;
-    if (ar_state != DONE || put_state != FREE) {
+    int put_idx = hc->pipeline.put_idx;
+    dpu_buf_t *accbuf = &hc->pipeline.accbuf[put_idx];
+    if (accbuf->phase != BCAST || accbuf->state != IDLE) {
         return UCS_ERR_NO_RESOURCE;
     }
-    stage->put.state = IN_PROGRESS;
-    hc->pipeline.idx.put = (put_idx + 1) % hc->pipeline.num_buffers;
 
     size_t dt_size = dpu_ucc_dt_size(sync->dtype);
-    size_t count = stage->ar.count;
+    size_t count = accbuf->count;
+    size_t put_offset = hc->pipeline.my_offset + hc->pipeline.put.done_elems * dt_size;
+    int dst_rank = hc->pipeline.dst_rank;
+
+    accbuf->state = IN_PROGRESS;
+    accbuf->put.issued_ops += 1;
+    hc->pipeline.put.issued_elems += count;
+    // hc->pipeline.acc_idx = (put_idx + 1) % 2;
+
     size_t data_size = count * dt_size;
-    void *src_addr = stage->put.buf;
-    void *dst_addr = sync->rkeys.dst_buf + hc->pipeline.count_put.issued * dt_size;
+    void *src_addr = accbuf->buf;
+    void *dst_addr = hc->host_rkeys[dst_rank].dst_buf + put_offset;
 
-    DPU_LOG("Issue Put idx %d count %lu total issued %zu src %p dst %p bytes %lu\n",
-            put_idx, count, hc->pipeline.count_put.issued, src_addr, dst_addr, data_size);
-    assert(count > 0);
-    assert(stage->put.ucp_req == NULL);
+    DPU_LOG("Issue Put idx %d to %d offset %lu src %p dst %p count %lu bytes %lu\n",
+            put_idx, dst_rank, put_offset, src_addr, dst_addr, count, data_size);
+    assert(count > 0 && dt_size > 0 && accbuf->ucp_req == NULL);
 
+    int32_t *pbuf = accbuf->buf;
+    DPU_LOG("## PUT DATA %ld %ld\n", pbuf[0], pbuf[1]);
+    
     ucp_worker_fence(hc->ucp_worker);
-    stage->put.ucp_req =
-            ucp_put_nbx(hc->localhost_ep, src_addr, data_size,
-            (uint64_t)dst_addr, hc->dst_rkey, &hc->req_param);
+    accbuf->ucp_req =
+            ucp_put_nbx(hc->host_eps[dst_rank], src_addr, data_size,
+            (uint64_t)dst_addr, hc->host_dst_rkeys[dst_rank], &hc->req_param);
 
-    stage->put.count = count;
-    hc->pipeline.count_put.issued += count;
-    hc->pipeline.inflight.put++;
+    hc->pipeline.dst_rank = (dst_rank + 1) % hc->world_size; // FIXME team size
     return UCS_OK;
 }
 
 ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx)
 {
-    int ar_idx = hc->pipeline.idx.ar;
-    dpu_stage_t *stage = &hc->pipeline.stage[ar_idx];
-    dpu_pipeline_stage_state_t get_state = stage->get.state;
-    dpu_pipeline_stage_state_t put_state = stage->put.state;
-    if (hc->pipeline.inflight.ar > 0 || get_state != DONE || put_state != FREE) {
+    int acc_idx = hc->pipeline.acc_idx;
+    int get_idx = hc->pipeline.get_idx;
+    dpu_buf_t *accbuf = &hc->pipeline.accbuf[acc_idx];
+    dpu_buf_t *getbuf = &hc->pipeline.accbuf[get_idx];
+    if (accbuf->phase != REDUCE || accbuf->state != IDLE ||
+        getbuf->phase != REDUCE || getbuf->state != IDLE) {
         return UCS_ERR_NO_RESOURCE;
     }
-    stage->ar.state = IN_PROGRESS;
-    hc->pipeline.idx.ar = (ar_idx + 1) % hc->pipeline.num_buffers;
 
-    size_t count = stage->get.count;
+    getbuf->state = IN_PROGRESS;
+    accbuf->state = IN_PROGRESS;
+    accbuf->red.issued_ops += 1;
+    hc->pipeline.red.issued_elems += accbuf->count;
+    thread_sub_sync->acc_idx = acc_idx;
+    thread_sub_sync->get_idx = get_idx;
 
-    DPU_LOG("Issue AR idx %d count %lu total issued %zu\n",
-            ar_idx, count, hc->pipeline.count_red.issued);
-    assert(count > 0);
-    assert(stage->get.ucp_req == NULL);
-    assert(stage->put.ucp_req == NULL);
+    int32_t *pbuf = accbuf->buf;
+    DPU_LOG("## ACC DATA %ld %ld\n", pbuf[0], pbuf[1]);
 
-    stage->ar.count = count;
-    hc->pipeline.count_red.issued += count;
-    hc->pipeline.inflight.ar++;
+    DPU_LOG("Issue AR accbuf[%d] getbuf[%d] count %lu total issued %lu\n",
+            acc_idx, hc->pipeline.red_idx, accbuf->count, hc->pipeline.red.issued_elems);
     dpu_signal_comp_threads(ctx, thread_sub_sync);
+
+    hc->pipeline.get_idx = !hc->pipeline.get_idx;
     return UCS_OK;
 }
 
@@ -828,10 +835,10 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
                     thread_ctx_t *ctx)
 {
     int i;
+    int ranks = hc->world_size;
     ucc_status_t status;
-    dpu_stage_t *stage; /* which buffer index is being used */
-    dpu_pipeline_stage_state_t state;
     ucs_status_ptr_t request;
+    dpu_buf_state_t state;
 
     for (i=0; i<10; i++) {
         if (ucp_worker_progress(hc->ucp_worker)) {
@@ -839,74 +846,109 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
         }
     }
 
-    for (i=0; i<hc->pipeline.num_buffers; i++) {
-        /* Get progress */
-        stage = &hc->pipeline.stage[i];
-        state = stage->get.state;
-        if (state == IN_PROGRESS) {
-            assert(hc->pipeline.inflight.get > 0);
-            request = stage->get.ucp_req;
-            if (_dpu_req_test(request) == UCS_OK) {
-                if (request != NULL ) {
-                    ucp_request_free(request);
-                    stage->get.ucp_req = NULL;
+    for (i=0; i<2; i++) {
+
+        dpu_buf_t *accbuf = &hc->pipeline.accbuf[i];
+        switch (accbuf->phase)
+        {
+        case INIT:
+            if (accbuf->state == IN_PROGRESS) {
+                request = accbuf->ucp_req;
+                if (_dpu_req_test(request) == UCS_OK) {
+                    if (request != NULL) {
+                        ucp_request_free(request);
+                        accbuf->ucp_req = NULL;
+                    }
+                    assert(accbuf->count > 0);
+                    accbuf->phase = REDUCE;
+                    accbuf->state = IDLE;
+                    accbuf->get.done_ops += 1;
+
+                    DPU_LOG("Finished Get into accbuf[%d] count %lu done %zu\n", i,
+                            accbuf->count, hc->pipeline.get.done_elems);
                 }
-                assert(stage->ar.state == FREE || stage->ar.state == DONE);
-                assert(stage->get.count > 0);
-
-                DPU_LOG("Finished Get idx %d count %lu done %zu\n",
-                        i, stage->get.count, hc->pipeline.count_get.done);
-
-                stage->get.state = DONE;
-                hc->pipeline.count_get.done += stage->get.count;
-                hc->pipeline.inflight.get--;
             }
-        }
-
-        /* Allreduce progress */
-        state = stage->ar.state;
-        if (state == IN_PROGRESS) {
-            assert(hc->pipeline.inflight.ar > 0);
+            break;
+        case REDUCE:
             if (dpu_check_comp_status(ctx, thread_sub_sync) == UCC_OK) {
-                assert(stage->get.state == DONE);
-                assert(stage->put.state == FREE);
-                assert(stage->ar.count > 0);
-                hc->pipeline.count_red.done += stage->ar.count;
-                hc->pipeline.inflight.ar--;
-   
-                DPU_LOG("Finished AR idx %d count %lu done %zu\n",
-                        i, stage->ar.count, hc->pipeline.count_red.done);
+                dpu_buf_t *getbuf = &hc->pipeline.getbuf[thread_sub_sync->get_idx];
+                getbuf->phase = INIT;
+                getbuf->state = FREE;
+                accbuf->red.done_ops += 1;
+                accbuf->state = IDLE;
+                hc->pipeline.red_idx = !hc->pipeline.red_idx;
 
-                stage->get.count = 0;
-                stage->get.state = FREE;
-                stage->ar.state  = DONE;
+                DPU_LOG("Finished %dth AR into accbuf[%d] count %lu total done %zu\n",
+                            accbuf->red.done_ops, i, accbuf->count, hc->pipeline.red.done_elems);
+                int32_t *pbuf = accbuf->buf;
+                DPU_LOG("## REDUCED DATA %ld %ld\n", pbuf[0], pbuf[1]);
+
+                if (accbuf->red.done_ops == ranks - 1) {
+                    accbuf->phase        = BCAST;
+                    accbuf->state        = IDLE;
+                    hc->pipeline.red.done_elems += accbuf->count;
+                    hc->pipeline.put_idx = hc->pipeline.acc_idx;
+                    hc->pipeline.acc_idx = !hc->pipeline.acc_idx;
+                    hc->pipeline.get.issued_elems = 0; //HACK
+                }
             }
+            break;
+        case BCAST:
+            if (accbuf->state == IN_PROGRESS) {
+                request = accbuf->ucp_req;
+                if (_dpu_req_test(request) == UCS_OK) {
+                    if (request != NULL) {
+                        ucp_request_free(request);
+                        accbuf->ucp_req = NULL;
+                    }
+                    assert(accbuf->count > 0);
+                    assert(accbuf->red.done_ops == ranks-1);
+                    accbuf->state = IDLE;
+                    accbuf->put.done_ops += 1;
+                    if (accbuf->put.done_ops == ranks) {
+                        hc->pipeline.put.done_elems += accbuf->count;
+                        accbuf->phase = INIT;
+                        accbuf->state = FREE;
+                        accbuf->red.issued_ops = 0;
+                        accbuf->red.done_ops = 0;
+                        accbuf->put.issued_ops = 0;
+                        accbuf->put.done_ops = 0;
+                        hc->pipeline.get.issued_elems = 0;
+                        hc->pipeline.get.done_elems = 0;
+                        ctx->coll_sync.count_serviced += accbuf->count * hc->world_size;
+                    }
+
+                    DPU_LOG("Finished Put from accbuf[%d] count %lu done %zu serviced %zu\n", i,
+                            accbuf->count, accbuf->put.done_ops, hc->pipeline.put.done_elems); //ctx->coll_sync.count_serviced);
+                }
+            }
+            break;
+        default:
+            break;
         }
 
-        /* Put progress */
-        state = stage->put.state;
-        if (state == IN_PROGRESS) {
-            assert(hc->pipeline.inflight.put > 0);
-            request = stage->put.ucp_req;
+        dpu_buf_t *getbuf = &hc->pipeline.getbuf[i];
+        if (getbuf->state == IN_PROGRESS) {
+            request = getbuf->ucp_req;
             if (_dpu_req_test(request) == UCS_OK) {
                 if (request != NULL) {
                     ucp_request_free(request);
-                    stage->put.ucp_req = NULL;
+                    getbuf->ucp_req = NULL;
                 }
-                assert(stage->ar.state == DONE);
-                assert(stage->put.count > 0);
-                hc->pipeline.count_put.done += stage->put.count;
-                hc->pipeline.inflight.put--;
-                
-                DPU_LOG("Finished Put idx %d count %lu done %zu\n",
-                        i, stage->put.count, hc->pipeline.count_put.done);
+                assert(getbuf->count > 0);
 
-                stage->ar.count  = 0;
-                stage->put.count = 0;
-                stage->ar.state  = FREE;
-                stage->put.state = FREE;
+                DPU_LOG("Finished Get into getbuf[%d] count %lu done %zu\n", i,
+                        getbuf->count, hc->pipeline.get.done_elems);
+
+                getbuf->phase = REDUCE;
+                getbuf->state = IDLE;
+                getbuf->get.done_ops += 1;
+                if (accbuf->get.done_ops == ranks - 1) {
+                    hc->pipeline.get.done_elems += getbuf->count;
+                }
             }
         }
+
     }
     return UCS_OK;
 }
