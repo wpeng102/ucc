@@ -585,6 +585,7 @@ void dpu_comm_worker(void *arg)
                 dpu_hc_issue_put(comm_thread_ctx->hc, lsync, comm_thread_ctx);
                 dpu_hc_progress(comm_thread_ctx->hc, lsync, comm_thread_ctx);
             }
+            dpu_hc_issue_hangup(comm_thread_ctx->hc, lsync, comm_thread_ctx);
 
             CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n",
                     coll_id, coll_type);
@@ -631,6 +632,7 @@ void *dpu_worker(void *arg)
             break;
         }
 
+        int finished = 0;
         /* Process all data */
         do {
             CTX_LOG("Waiting for more data from comm thread\n");
@@ -642,21 +644,27 @@ void *dpu_worker(void *arg)
             dpu_pipeline_t *pipe = &ctx->hc->pipeline;
             int acc_idx = thread_sub_sync->acc_idx;
             int get_idx = thread_sub_sync->get_idx;
+            if (acc_idx == -1 && get_idx == -1) {
+                finished = 1;
+                goto done;
+            }
+
             size_t count = pipe->accbuf[acc_idx].count;
             int32_t *accbuf = pipe->accbuf[acc_idx].buf;
             int32_t *getbuf = pipe->getbuf[get_idx].buf;
             for (int k = 0; k < count; k++) {
                 accbuf[k] += getbuf[k];
             }
-            ctx->coll_sync.count_serviced += count * ctx->hc->world_size;
             CTX_LOG("DATA accbuf[%d] %ld getbuf[%d] %ld\n", acc_idx, accbuf[1], get_idx, getbuf[1]);
             CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
-                    count, ctx->coll_sync.count_serviced, count_total);
+                    count, ctx->hc->pipeline.red.done_elems, ctx->hc->pipeline.my_count);
+        done:
             dpu_signal_comm_thread(ctx, thread_sub_sync);
 
-        } while (ctx->coll_sync.count_serviced < count_total);
+        } while (!finished);
 
-        assert(count_total == ctx->coll_sync.count_serviced);
+        ctx->coll_sync.count_serviced = ctx->hc->pipeline.my_count * ctx->hc->world_size;
+        assert(count_total <= ctx->coll_sync.count_serviced);
         CTX_LOG("End coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
                 coll_id, coll_type, count_total, (size_t)ctx->coll_sync.count_serviced);
         dpu_signal_comm_thread(ctx, thread_main_sync);

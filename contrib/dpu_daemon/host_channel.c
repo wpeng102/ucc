@@ -819,6 +819,14 @@ ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_c
     return UCS_OK;
 }
 
+ucs_status_t dpu_hc_issue_hangup(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx)
+{
+    thread_sub_sync->acc_idx = -1;
+    thread_sub_sync->get_idx = -1;
+    dpu_signal_comp_threads(ctx, thread_sub_sync);
+    return UCS_OK;
+}
+
 ucc_status_t dpu_check_comp_status(thread_ctx_t *ctx, thread_sync_t *sync)
 {
     int i;
@@ -839,6 +847,7 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
     ucc_status_t status;
     ucs_status_ptr_t request;
     dpu_buf_state_t state;
+    dpu_buf_t *accbuf, *getbuf;
 
     for (i=0; i<10; i++) {
         if (ucp_worker_progress(hc->ucp_worker)) {
@@ -848,25 +857,26 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
 
     for (i=0; i<2; i++) {
 
-        dpu_buf_t *accbuf = &hc->pipeline.accbuf[i];
+        accbuf = &hc->pipeline.accbuf[i];
+        if (accbuf->state != IN_PROGRESS) {
+            goto check_getbuf;
+        }
+        request = accbuf->ucp_req;
         switch (accbuf->phase)
         {
         case INIT:
-            if (accbuf->state == IN_PROGRESS) {
-                request = accbuf->ucp_req;
-                if (_dpu_req_test(request) == UCS_OK) {
-                    if (request != NULL) {
-                        ucp_request_free(request);
-                        accbuf->ucp_req = NULL;
-                    }
-                    assert(accbuf->count > 0);
-                    accbuf->phase = REDUCE;
-                    accbuf->state = IDLE;
-                    accbuf->get.done_ops += 1;
-
-                    DPU_LOG("Finished Get into accbuf[%d] count %lu done %zu\n", i,
-                            accbuf->count, hc->pipeline.get.done_elems);
+            if (_dpu_req_test(request) == UCS_OK) {
+                if (request != NULL) {
+                    ucp_request_free(request);
+                    accbuf->ucp_req = NULL;
                 }
+                assert(accbuf->count > 0);
+                accbuf->phase = REDUCE;
+                accbuf->state = IDLE;
+                accbuf->get.done_ops += 1;
+
+                DPU_LOG("Finished Get into accbuf[%d] count %lu done %zu\n", i,
+                        accbuf->count, hc->pipeline.get.done_elems);
             }
             break;
         case REDUCE:
@@ -894,62 +904,58 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
             }
             break;
         case BCAST:
-            if (accbuf->state == IN_PROGRESS) {
-                request = accbuf->ucp_req;
-                if (_dpu_req_test(request) == UCS_OK) {
-                    if (request != NULL) {
-                        ucp_request_free(request);
-                        accbuf->ucp_req = NULL;
-                    }
-                    assert(accbuf->count > 0);
-                    assert(accbuf->red.done_ops == ranks-1);
-                    accbuf->state = IDLE;
-                    accbuf->put.done_ops += 1;
-                    if (accbuf->put.done_ops == ranks) {
-                        hc->pipeline.put.done_elems += accbuf->count;
-                        accbuf->phase = INIT;
-                        accbuf->state = FREE;
-                        accbuf->red.issued_ops = 0;
-                        accbuf->red.done_ops = 0;
-                        accbuf->put.issued_ops = 0;
-                        accbuf->put.done_ops = 0;
-                        hc->pipeline.get.issued_elems = 0;
-                        hc->pipeline.get.done_elems = 0;
-                        ctx->coll_sync.count_serviced += accbuf->count * hc->world_size;
-                    }
-
-                    DPU_LOG("Finished Put from accbuf[%d] count %lu done %zu serviced %zu\n", i,
-                            accbuf->count, accbuf->put.done_ops, hc->pipeline.put.done_elems); //ctx->coll_sync.count_serviced);
+            if (_dpu_req_test(request) == UCS_OK) {
+                if (request != NULL) {
+                    ucp_request_free(request);
+                    accbuf->ucp_req = NULL;
                 }
+                assert(accbuf->count > 0);
+                assert(accbuf->red.done_ops == ranks-1);
+                accbuf->state = IDLE;
+                accbuf->put.done_ops += 1;
+                if (accbuf->put.done_ops == ranks) {
+                    hc->pipeline.put.done_elems += accbuf->count;
+                    accbuf->phase = INIT;
+                    accbuf->state = FREE;
+                    accbuf->get = accbuf->put = accbuf->red = zero_op;
+                    hc->pipeline.get.issued_elems = 0;
+                    hc->pipeline.get.done_elems = 0;
+                }
+
+                DPU_LOG("Finished Put from accbuf[%d] count %lu done %zu serviced %zu\n", i,
+                        accbuf->count, accbuf->put.done_ops, hc->pipeline.put.done_elems);
             }
             break;
         default:
             break;
         }
 
-        dpu_buf_t *getbuf = &hc->pipeline.getbuf[i];
-        if (getbuf->state == IN_PROGRESS) {
-            request = getbuf->ucp_req;
-            if (_dpu_req_test(request) == UCS_OK) {
-                if (request != NULL) {
-                    ucp_request_free(request);
-                    getbuf->ucp_req = NULL;
-                }
-                assert(getbuf->count > 0);
+check_getbuf:
+        getbuf = &hc->pipeline.getbuf[i];
+        if (getbuf->state != IN_PROGRESS) {
+            goto ret;
+        }
+        request = getbuf->ucp_req;
+        if (_dpu_req_test(request) == UCS_OK) {
+            if (request != NULL) {
+                ucp_request_free(request);
+                getbuf->ucp_req = NULL;
+            }
+            assert(getbuf->count > 0);
 
-                DPU_LOG("Finished Get into getbuf[%d] count %lu done %zu\n", i,
-                        getbuf->count, hc->pipeline.get.done_elems);
+            DPU_LOG("Finished Get into getbuf[%d] count %lu done %zu\n", i,
+                    getbuf->count, hc->pipeline.get.done_elems);
 
-                getbuf->phase = REDUCE;
-                getbuf->state = IDLE;
-                getbuf->get.done_ops += 1;
-                if (accbuf->get.done_ops == ranks - 1) {
-                    hc->pipeline.get.done_elems += getbuf->count;
-                }
+            getbuf->phase = REDUCE;
+            getbuf->state = IDLE;
+            getbuf->get.done_ops += 1;
+            if (accbuf->get.done_ops == ranks - 1) {
+                hc->pipeline.get.done_elems += getbuf->count;
             }
         }
-
     }
+
+ret:
     return UCS_OK;
 }
 

@@ -131,9 +131,9 @@ typedef struct dpu_buf_t {
     volatile dpu_buf_phase_t    phase;
     volatile dpu_buf_state_t    state;
     void                       *buf;
-    ucs_status_ptr_t            ucp_req;
-    size_t                      count;
-    op_count_t                  get, red, put;
+    volatile ucs_status_ptr_t   ucp_req;
+    volatile size_t             count;
+    volatile op_count_t         get, red, put;
 } dpu_buf_t;
 
 typedef struct dpu_pipeline_t {
@@ -147,9 +147,9 @@ typedef struct dpu_pipeline_t {
     volatile int put_idx;
     dpu_buf_t    getbuf[2];
     dpu_buf_t    accbuf[2];
-    elem_count_t get, red, put;
-    int          src_rank;
-    int          dst_rank;
+    volatile elem_count_t get, red, put;
+    volatile int src_rank;
+    volatile int dst_rank;
     size_t       my_count;
     size_t       my_offset;
 } dpu_pipeline_t;
@@ -212,7 +212,7 @@ typedef struct thread_sync_t {
     volatile unsigned int pad1[15]; /* pad to 64bytes */
     volatile unsigned int done;     /* second cache line */
     volatile unsigned int pad2[15]; /* pad to 64 bytes */
-    int acc_idx, get_idx;
+    volatile int acc_idx, get_idx;
 } thread_sync_t;
 
 extern thread_sync_t *thread_main_sync;
@@ -222,6 +222,7 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx
 ucs_status_t dpu_hc_issue_put(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 ucs_status_t dpu_hc_progress(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+ucs_status_t dpu_hc_issue_hangup(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);
 
