@@ -143,7 +143,6 @@ typedef struct dpu_pipeline_t {
 
     volatile int get_idx;
     volatile int acc_idx;
-    volatile int red_idx;
     volatile int put_idx;
     dpu_buf_t    getbuf[2];
     dpu_buf_t    accbuf[2];

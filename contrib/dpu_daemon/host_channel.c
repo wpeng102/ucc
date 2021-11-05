@@ -306,9 +306,7 @@ static void _dpu_hc_reset_buf(dpu_buf_t *buf)
 static void _dpu_hc_reset_pipeline(dpu_hc_t *hc)
 {
     dpu_pipeline_t *pipe = &hc->pipeline;
-    pipe->get_idx = 0;
-    pipe->acc_idx = 0;
-    pipe->red_idx = 0;
+    pipe->get_idx = pipe->acc_idx = pipe->put_idx = 0;
     pipe->src_rank = pipe->dst_rank = hc->world_rank; // FIXME team rank
     pipe->get = pipe->red = pipe->put = zero_elem;
     _dpu_hc_reset_buf(&pipe->getbuf[0]);
@@ -711,20 +709,18 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
 
 ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx)
 {
-    dpu_buf_t *getbuf = NULL;
     int get_elems = hc->pipeline.get.issued_elems;
-    if (get_elems > 0) {
-        getbuf = &hc->pipeline.getbuf[hc->pipeline.get_idx];
-    } else {
-        getbuf = &hc->pipeline.accbuf[hc->pipeline.acc_idx];
-    }
+    int idx = get_elems > 0 ? hc->pipeline.get_idx : hc->pipeline.acc_idx;
+    dpu_buf_t *getbuf = get_elems > 0 ? &hc->pipeline.getbuf[idx] : &hc->pipeline.accbuf[idx];
     if (getbuf->state != FREE) {
         return UCS_ERR_NO_RESOURCE;
     }
+    DPU_LOG("Select %s[%d] for GET\n", get_elems > 0 ? "getbuf" : "accbuf", idx);
+
     size_t dt_size = dpu_ucc_dt_size(sync->dtype);
-    size_t remaining_elems = hc->pipeline.my_count - hc->pipeline.get.done_elems;
+    size_t remaining_elems = hc->pipeline.my_count - hc->pipeline.red.done_elems;
     size_t count = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
-    size_t get_offset = hc->pipeline.my_offset + hc->pipeline.get.done_elems * dt_size;
+    size_t get_offset = hc->pipeline.my_offset + hc->pipeline.red.done_elems * dt_size;
     int src_rank = hc->pipeline.src_rank;
 
     if (0 == count) {
@@ -795,14 +791,18 @@ ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_c
     int acc_idx = hc->pipeline.acc_idx;
     int get_idx = hc->pipeline.get_idx;
     dpu_buf_t *accbuf = &hc->pipeline.accbuf[acc_idx];
-    dpu_buf_t *getbuf = &hc->pipeline.accbuf[get_idx];
+    dpu_buf_t *getbuf = &hc->pipeline.getbuf[get_idx];
     if (accbuf->phase != REDUCE || accbuf->state != IDLE ||
         getbuf->phase != REDUCE || getbuf->state != IDLE) {
         return UCS_ERR_NO_RESOURCE;
     }
+    assert(thread_sub_sync->acc_idx == -1);
+    assert(thread_sub_sync->get_idx == -1);
+    assert(getbuf->red.issued_ops == 0);
 
     getbuf->state = IN_PROGRESS;
     accbuf->state = IN_PROGRESS;
+    getbuf->red.issued_ops += 1;
     accbuf->red.issued_ops += 1;
     hc->pipeline.red.issued_elems += accbuf->count;
     thread_sub_sync->acc_idx = acc_idx;
@@ -812,7 +812,7 @@ ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_c
     DPU_LOG("## ACC DATA %ld %ld\n", pbuf[0], pbuf[1]);
 
     DPU_LOG("Issue AR accbuf[%d] getbuf[%d] count %lu total issued %lu\n",
-            acc_idx, hc->pipeline.red_idx, accbuf->count, hc->pipeline.red.issued_elems);
+            acc_idx, hc->pipeline.acc_idx, accbuf->count, hc->pipeline.red.issued_elems);
     dpu_signal_comp_threads(ctx, thread_sub_sync);
 
     hc->pipeline.get_idx = !hc->pipeline.get_idx;
@@ -856,10 +856,9 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
     }
 
     for (i=0; i<2; i++) {
-
         accbuf = &hc->pipeline.accbuf[i];
         if (accbuf->state != IN_PROGRESS) {
-            goto check_getbuf;
+            continue;
         }
         request = accbuf->ucp_req;
         switch (accbuf->phase)
@@ -881,12 +880,23 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
             break;
         case REDUCE:
             if (dpu_check_comp_status(ctx, thread_sub_sync) == UCC_OK) {
-                dpu_buf_t *getbuf = &hc->pipeline.getbuf[thread_sub_sync->get_idx];
+                int acc_idx = thread_sub_sync->acc_idx;
+                int get_idx = thread_sub_sync->get_idx;
+                assert(acc_idx == 0 || acc_idx == 1);
+                assert(get_idx == 0 || get_idx == 1);
+                thread_sub_sync->acc_idx = -1;
+                thread_sub_sync->get_idx = -1;
+
+                getbuf = &hc->pipeline.getbuf[get_idx];
+                DPU_LOG("getbuf idx %d phase %d state %d red.ops %d\n", get_idx, getbuf->phase, getbuf->state, getbuf->red.issued_ops);
+                assert(getbuf->phase == REDUCE);
+                assert(getbuf->state == IN_PROGRESS);
+                assert(getbuf->red.issued_ops == 1);
+                accbuf->state = IDLE;
+                accbuf->red.done_ops += 1;
                 getbuf->phase = INIT;
                 getbuf->state = FREE;
-                accbuf->red.done_ops += 1;
-                accbuf->state = IDLE;
-                hc->pipeline.red_idx = !hc->pipeline.red_idx;
+                getbuf->red.issued_ops = 0;
 
                 DPU_LOG("Finished %dth AR into accbuf[%d] count %lu total done %zu\n",
                             accbuf->red.done_ops, i, accbuf->count, hc->pipeline.red.done_elems);
@@ -929,11 +939,12 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
         default:
             break;
         }
+    }
 
-check_getbuf:
+    for (i=0; i<2; i++) {
         getbuf = &hc->pipeline.getbuf[i];
-        if (getbuf->state != IN_PROGRESS) {
-            goto ret;
+        if (getbuf->phase != INIT || getbuf->state != IN_PROGRESS) {
+            continue;
         }
         request = getbuf->ucp_req;
         if (_dpu_req_test(request) == UCS_OK) {
@@ -949,13 +960,11 @@ check_getbuf:
             getbuf->phase = REDUCE;
             getbuf->state = IDLE;
             getbuf->get.done_ops += 1;
-            if (accbuf->get.done_ops == ranks - 1) {
-                hc->pipeline.get.done_elems += getbuf->count;
-            }
+            assert(getbuf->red.issued_ops == 0);
+            //hc->pipeline.get.done_elems += getbuf->count;
         }
     }
 
-ret:
     return UCS_OK;
 }
 

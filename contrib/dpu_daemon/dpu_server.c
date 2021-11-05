@@ -705,6 +705,7 @@ int main(int argc, char **argv)
 
     thread_sub_sync = aligned_alloc(64, nthreads * sizeof(*thread_sub_sync));
     memset(thread_sub_sync, 0, nthreads * sizeof(*thread_sub_sync));
+    thread_sub_sync->acc_idx = thread_sub_sync->get_idx = -1;
 
     hc = &hc_b;
 
