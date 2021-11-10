@@ -718,9 +718,9 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *
     DPU_LOG("Select %s[%d] for GET\n", get_elems > 0 ? "getbuf" : "accbuf", idx);
 
     size_t dt_size = dpu_ucc_dt_size(sync->dtype);
-    size_t remaining_elems = hc->pipeline.my_count - hc->pipeline.red.done_elems;
+    size_t remaining_elems = hc->pipeline.my_count - hc->pipeline.get.done_elems;
     size_t count = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
-    size_t get_offset = hc->pipeline.my_offset + hc->pipeline.red.done_elems * dt_size;
+    size_t get_offset = hc->pipeline.my_offset + hc->pipeline.get.done_elems * dt_size;
     int src_rank = hc->pipeline.src_rank;
 
     if (0 == count) {
@@ -804,7 +804,10 @@ ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_c
     accbuf->state = IN_PROGRESS;
     getbuf->red.issued_ops += 1;
     accbuf->red.issued_ops += 1;
+    if (accbuf->red.issued_ops == 1) {
+    hc->pipeline.get.done_elems += accbuf->count;
     hc->pipeline.red.issued_elems += accbuf->count;
+    }
     thread_sub_sync->acc_idx = acc_idx;
     thread_sub_sync->get_idx = get_idx;
 
@@ -910,6 +913,7 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
                     hc->pipeline.put_idx = hc->pipeline.acc_idx;
                     hc->pipeline.acc_idx = !hc->pipeline.acc_idx;
                     hc->pipeline.get.issued_elems = 0; //HACK
+                    DPU_LOG("## Moving put idx to %d from %d, red ops done %d\n", hc->pipeline.put_idx, hc->pipeline.acc_idx, accbuf->red.done_ops);
                 }
             }
             break;
@@ -929,7 +933,6 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
                     accbuf->state = FREE;
                     accbuf->get = accbuf->put = accbuf->red = zero_op;
                     hc->pipeline.get.issued_elems = 0;
-                    hc->pipeline.get.done_elems = 0;
                 }
 
                 DPU_LOG("Finished Put from accbuf[%d] count %lu done %zu serviced %zu\n", i,
@@ -961,7 +964,6 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
             getbuf->state = IDLE;
             getbuf->get.done_ops += 1;
             assert(getbuf->red.issued_ops == 0);
-            //hc->pipeline.get.done_elems += getbuf->count;
         }
     }
 

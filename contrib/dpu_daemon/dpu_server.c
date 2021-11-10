@@ -638,8 +638,8 @@ void *dpu_worker(void *arg)
             CTX_LOG("Waiting for more data from comm thread\n");
             dpu_waitfor_comm_thread(ctx, thread_sub_sync);
             assert(UCC_COLL_TYPE_ALLREDUCE == lsync->coll_type);
-            assert(UCC_OP_SUM == lsync->op);
-            assert(UCC_DT_INT32 == lsync->dtype);
+            //assert(UCC_OP_SUM == lsync->op);
+            //assert(UCC_DT_INT32 == lsync->dtype);
 
             dpu_pipeline_t *pipe = &ctx->hc->pipeline;
             int acc_idx = thread_sub_sync->acc_idx;
@@ -653,7 +653,7 @@ void *dpu_worker(void *arg)
             int32_t *accbuf = pipe->accbuf[acc_idx].buf;
             int32_t *getbuf = pipe->getbuf[get_idx].buf;
             for (int k = 0; k < count; k++) {
-                accbuf[k] += getbuf[k];
+            //    accbuf[k] += getbuf[k];
             }
             CTX_LOG("DATA accbuf[%d] %ld getbuf[%d] %ld\n", acc_idx, accbuf[1], get_idx, getbuf[1]);
             CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
