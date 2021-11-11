@@ -105,52 +105,53 @@ typedef struct dpu_mem_segs_t {
     dpu_mem_t out;
 } dpu_mem_segs_t;
 
-typedef enum dpu_buf_phase_t {
+typedef enum dpu_stage_phase_t {
     INIT,
     REDUCE,
     BCAST,
-} dpu_buf_phase_t;
+    WAIT,
+} dpu_stage_phase_t;
 
 typedef enum dpu_buf_state_t {
     FREE,
     IN_PROGRESS,
+    REDUCING,
     IDLE,
 } dpu_buf_state_t;
 
-typedef struct op_count_t {
-    int issued_ops;
-    int done_ops;
-} op_count_t;
-
-typedef struct elem_count_t {
-    size_t issued_elems;
-    size_t done_elems;
-} elem_count_t;
-
 typedef struct dpu_buf_t {
-    volatile dpu_buf_phase_t    phase;
-    volatile dpu_buf_state_t    state;
     void                       *buf;
+    volatile dpu_buf_state_t    state;
     volatile ucs_status_ptr_t   ucp_req;
     volatile size_t             count;
-    volatile op_count_t         get, red, put;
 } dpu_buf_t;
+
+typedef struct dpu_stage_t {
+    dpu_buf_t accbuf;
+    dpu_buf_t getbuf[2];
+    
+    volatile dpu_stage_phase_t phase;
+    volatile int get_idx;
+    volatile int src_rank;
+    volatile int dst_rank;
+    
+    volatile int done_get;
+    volatile int done_red;
+    volatile int done_put;
+} dpu_stage_t;
 
 typedef struct dpu_pipeline_t {
     size_t              buffer_size;
     size_t              num_buffers;
     ucs_status_ptr_t    sync_req;
+    
+    dpu_stage_t         stages[2];
+    size_t              my_count;
+    size_t              my_offset;
 
-    volatile int get_idx;
-    volatile int acc_idx;
-    volatile int put_idx;
-    dpu_buf_t    getbuf[2];
-    dpu_buf_t    accbuf[2];
-    volatile elem_count_t get, red, put;
-    volatile int src_rank;
-    volatile int dst_rank;
-    size_t       my_count;
-    size_t       my_offset;
+    volatile size_t     count_received;
+    volatile size_t     count_reduced;
+    volatile size_t     count_serviced;
 } dpu_pipeline_t;
 
 typedef struct dpu_hc_t {
@@ -211,15 +212,15 @@ typedef struct thread_sync_t {
     volatile unsigned int pad1[15]; /* pad to 64bytes */
     volatile unsigned int done;     /* second cache line */
     volatile unsigned int pad2[15]; /* pad to 64 bytes */
-    volatile int acc_idx, get_idx;
+    volatile dpu_buf_t *accbuf, *getbuf;
 } thread_sync_t;
 
 extern thread_sync_t *thread_main_sync;
 extern thread_sync_t *thread_sub_sync;
 
-ucs_status_t dpu_hc_issue_get(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
-ucs_status_t dpu_hc_issue_put(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
-ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *getbuf);
+ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *accbuf);
+ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, thread_ctx_t *ctx, dpu_stage_t *stage, dpu_buf_t *accbuf, dpu_buf_t *getbuf);
 ucs_status_t dpu_hc_progress(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 ucs_status_t dpu_hc_issue_hangup(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 

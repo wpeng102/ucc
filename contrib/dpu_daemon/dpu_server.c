@@ -579,10 +579,7 @@ void dpu_comm_worker(void *arg)
             }
 
             dpu_signal_comp_threads(comm_thread_ctx, thread_main_sync);
-            while (hc->pipeline.put.done_elems < hc->pipeline.my_count) {
-                dpu_hc_issue_get(comm_thread_ctx->hc, lsync, comm_thread_ctx);
-                dpu_hc_issue_allreduce(comm_thread_ctx->hc, lsync, comm_thread_ctx);
-                dpu_hc_issue_put(comm_thread_ctx->hc, lsync, comm_thread_ctx);
+            while (hc->pipeline.count_serviced < hc->pipeline.my_count) {
                 dpu_hc_progress(comm_thread_ctx->hc, lsync, comm_thread_ctx);
             }
             dpu_hc_issue_hangup(comm_thread_ctx->hc, lsync, comm_thread_ctx);
@@ -641,23 +638,24 @@ void *dpu_worker(void *arg)
             //assert(UCC_OP_SUM == lsync->op);
             //assert(UCC_DT_INT32 == lsync->dtype);
 
-            dpu_pipeline_t *pipe = &ctx->hc->pipeline;
-            int acc_idx = thread_sub_sync->acc_idx;
-            int get_idx = thread_sub_sync->get_idx;
-            if (acc_idx == -1 && get_idx == -1) {
+            dpu_buf_t *accbuf = thread_sub_sync->accbuf;
+            dpu_buf_t *getbuf = thread_sub_sync->getbuf;
+            if (accbuf == NULL && getbuf == NULL) {
                 finished = 1;
                 goto done;
             }
+            assert(accbuf->state == IN_PROGRESS && accbuf->count > 0 && accbuf->ucp_req == NULL);
+            assert(getbuf->state == IN_PROGRESS && getbuf->count > 0 && getbuf->ucp_req == NULL);
 
-            size_t count = pipe->accbuf[acc_idx].count;
-            int32_t *accbuf = pipe->accbuf[acc_idx].buf;
-            int32_t *getbuf = pipe->getbuf[get_idx].buf;
+            size_t count = accbuf->count;
+            int32_t *acc_buf = accbuf->buf;
+            int32_t *get_buf = getbuf->buf;
             for (int k = 0; k < count; k++) {
-            //    accbuf[k] += getbuf[k];
+            //    acc_buf[k] += get_buf[k];
             }
-            CTX_LOG("DATA accbuf[%d] %ld getbuf[%d] %ld\n", acc_idx, accbuf[1], get_idx, getbuf[1]);
+            // CTX_LOG("DATA accbuf[%d] %ld getbuf[%d] %ld\n", acc_idx, accbuf[1], get_idx, getbuf[1]);
             CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
-                    count, ctx->hc->pipeline.red.done_elems, ctx->hc->pipeline.my_count);
+                    count, ctx->hc->pipeline.count_reduced, ctx->hc->pipeline.my_count);
         done:
             dpu_signal_comm_thread(ctx, thread_sub_sync);
 
@@ -705,7 +703,6 @@ int main(int argc, char **argv)
 
     thread_sub_sync = aligned_alloc(64, nthreads * sizeof(*thread_sub_sync));
     memset(thread_sub_sync, 0, nthreads * sizeof(*thread_sub_sync));
-    thread_sub_sync->acc_idx = thread_sub_sync->get_idx = -1;
 
     hc = &hc_b;
 
