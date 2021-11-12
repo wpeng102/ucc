@@ -644,16 +644,16 @@ void *dpu_worker(void *arg)
                 finished = 1;
                 goto done;
             }
-            assert(accbuf->state == IN_PROGRESS && accbuf->count > 0 && accbuf->ucp_req == NULL);
-            assert(getbuf->state == IN_PROGRESS && getbuf->count > 0 && getbuf->ucp_req == NULL);
+            assert(accbuf->state == REDUCING && accbuf->count > 0 && accbuf->ucp_req == NULL);
+            assert(getbuf->state == REDUCING && getbuf->count > 0 && getbuf->ucp_req == NULL);
 
             size_t count = accbuf->count;
             int32_t *acc_buf = accbuf->buf;
             int32_t *get_buf = getbuf->buf;
             for (int k = 0; k < count; k++) {
-            //    acc_buf[k] += get_buf[k];
+                acc_buf[k] += get_buf[k];
             }
-            // CTX_LOG("DATA accbuf[%d] %ld getbuf[%d] %ld\n", acc_idx, accbuf[1], get_idx, getbuf[1]);
+            CTX_LOG("REDUCED DATA accbuf %ld %ld getbuf %ld %ld\n", acc_buf[0], acc_buf[1], get_buf[0], get_buf[1]);
             CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
                     count, ctx->hc->pipeline.count_reduced, ctx->hc->pipeline.my_count);
         done:
@@ -662,7 +662,7 @@ void *dpu_worker(void *arg)
         } while (!finished);
 
         ctx->coll_sync.count_serviced = ctx->hc->pipeline.my_count * ctx->hc->world_size;
-        assert(count_total <= ctx->coll_sync.count_serviced);
+        // assert(count_total <= ctx->coll_sync.count_serviced);
         CTX_LOG("End coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
                 coll_id, coll_type, count_total, (size_t)ctx->coll_sync.count_serviced);
         dpu_signal_comm_thread(ctx, thread_main_sync);

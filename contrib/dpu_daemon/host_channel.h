@@ -106,15 +106,15 @@ typedef struct dpu_mem_segs_t {
 } dpu_mem_segs_t;
 
 typedef enum dpu_stage_phase_t {
+    WAIT,
     INIT,
     REDUCE,
     BCAST,
-    WAIT,
 } dpu_stage_phase_t;
 
 typedef enum dpu_buf_state_t {
     FREE,
-    IN_PROGRESS,
+    SENDRECV,
     REDUCING,
     IDLE,
 } dpu_buf_state_t;
@@ -132,6 +132,7 @@ typedef struct dpu_stage_t {
     
     volatile dpu_stage_phase_t phase;
     volatile int get_idx;
+    volatile int red_idx;
     volatile int src_rank;
     volatile int dst_rank;
     
