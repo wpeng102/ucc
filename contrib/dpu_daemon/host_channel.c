@@ -868,7 +868,7 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
             }
             break;
             case REDUCE:
-            if (getbuf->state == FREE) {
+            if (getbuf->state == FREE && stage->done_get < ranks) {
                 assert(stage->done_get > 0);
                 dpu_hc_issue_get(hc, sync, stage, getbuf);
                 // assert(getbuf->ucp_req != NULL);
@@ -894,6 +894,7 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
                 }
             }
             if (getbuf->state == IDLE && accbuf->state == IDLE) {
+                assert(stage->done_get > stage->done_red);
                 dpu_hc_issue_allreduce(hc, ctx, stage, accbuf, getbuf);
                 /* Swap Reduce and Get buffers */
                 stage->red_idx = stage->get_idx;
@@ -902,7 +903,7 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
             if (redbuf->state == REDUCING && accbuf->state == REDUCING) {
                 /* Check for reduce completion */
                 if (dpu_check_comp_status(ctx, thread_sub_sync) == UCC_OK) {
-                    redbuf->state = IDLE;
+                    redbuf->state = FREE;
                     accbuf->state = IDLE;
                     stage->done_red += 1;
                     DPU_LOG("Stage %d reduced %ld bytes from getbuf[%d], reds done %d\n",
@@ -918,7 +919,11 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
             }
             break;
             case BCAST:
-            if (accbuf->state == IDLE) {
+            if (accbuf->state == IDLE && accbuf->count > 0) {
+                DPU_LOG("Ranks %d Stage %d done get %d red %d put %d\n", ranks, i, stage->done_get, stage->done_red, stage->done_put);
+                assert(stage->done_get == ranks);
+                assert(stage->done_red == ranks-1);
+                assert(stage->done_put <= ranks);
                 dpu_hc_issue_put(hc, sync, stage, accbuf);
                 // assert(accbuf->ucp_req != NULL);
             } else if (accbuf->state == SENDRECV && accbuf->count > 0) {
@@ -936,14 +941,20 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
                         pp->count_serviced += accbuf->count;
                         stage->phase = WAIT;
 
+                        /* Reset this stage counters */
+                        _dpu_hc_reset_stage(stage, hc);
+
                         /* Allow next stage to start */
-                        int other = (i+1) % 2;
-                        dpu_stage_t *next_stage = &pp->stages[other];
-                        DPU_LOG("Next stage %d, state %d\n", other, next_stage->phase);
+                        int next = (i+1) % 2;
+                        dpu_stage_t *next_stage = &pp->stages[next];
+                        DPU_LOG("Next stage %d, state %d\n", next, next_stage->phase);
                         assert(next_stage->phase == WAIT);
                         next_stage->phase = INIT;
                     }
                 }
+            } else {
+                DPU_LOG("Impossible!! stage %d %p phase %d state %d\n", i, stage, stage->phase, accbuf->state);
+                assert(0);
             }
             break;
             default:

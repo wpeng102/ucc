@@ -221,98 +221,10 @@ static void dpu_coll_free_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     unsigned int team_size = 0;
     ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
     UCC_CHECK(ucc_team_get_size(team, &team_size));
+    CTX_LOG("Freeing src/dst rkeys for %u hosts\n", team_size);
     for (i = 0; i < team_size; i++) {
         ucp_rkey_destroy(ctx->hc->host_src_rkeys[i]);
         ucp_rkey_destroy(ctx->hc->host_dst_rkeys[i]);
-    }
-}
-
-static void dpu_coll_blocking_allreduce(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
-{
-    int    i, j, k;
-    int    src_rank;
-    int    dst_rank;
-    void  *src_addr;
-    void  *dst_addr;
-
-    ucs_status_t status;
-    ucs_status_ptr_t request;
-
-    /* TODO: use stages */
-    dpu_hc_t *hc = ctx->hc;
-    int32_t *getbuf = ctx->hc->mem_segs.in.base;
-    int32_t *accbuf = ctx->hc->mem_segs.out.base;
-
-    /* TODO: get from comm */
-    int team_rank = ctx->hc->world_rank;
-    int team_size = ctx->hc->world_size;
-    ucc_reduction_op_t op = lsync->op;
-    ucc_datatype_t dtype  = lsync->dtype;
-    ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
-
-    /* TODO: use reduce local */
-    assert(UCC_OP_SUM == op);
-    assert(UCC_DT_INT32 == dtype);
-
-    /* TODO: handle smaller counts */
-    size_t dt_size      = dpu_ucc_dt_size(dtype);
-    size_t count        = lsync->count_total;
-    size_t maxcount     = 256;
-    size_t done         = 0;
-
-    // iterate over entire vector
-    while (done < count) {
-        size_t block_size = DPU_MIN(count-done, maxcount);
-        size_t g_offset   = done * dt_size;
-        size_t l_offset   = team_rank * block_size * dt_size;
-
-        src_addr = hc->host_rkeys[team_rank].src_buf + g_offset + l_offset;
-        CTX_LOG("Issue Get from rank %d src %p dst %p bytes %lu\n", team_rank,
-                src_addr, accbuf, block_size * dt_size);
-        ucp_worker_fence(hc->ucp_worker);
-        request = ucp_get_nbx(hc->host_eps[team_rank], accbuf, block_size * dt_size,
-                              (uint64_t)src_addr, hc->host_src_rkeys[team_rank],
-                              &hc->req_param);
-        status = _dpu_request_wait(hc->ucp_worker, request);
-        assert(UCS_OK == status);
-
-        // get data and reduce from each host
-        for (j = 1; j < team_size; j++) {
-            src_rank = (team_rank + j) % team_size;
-            src_addr = hc->host_rkeys[src_rank].src_buf + g_offset + l_offset;
-            
-            CTX_LOG("Issue Get from rank %d src %p dst %p bytes %lu\n", src_rank,
-                    src_addr, accbuf, block_size * dt_size);
-            ucp_worker_fence(hc->ucp_worker);
-            request = ucp_get_nbx(hc->host_eps[src_rank], getbuf, block_size * dt_size,
-                                  (uint64_t)src_addr, hc->host_src_rkeys[src_rank],
-                                  &hc->req_param);
-            status = _dpu_request_wait(hc->ucp_worker, request);
-            assert(UCS_OK == status);
-
-            // Reduce
-            //#pragma omp parallel for
-            for (k = 0; k < block_size; k++) {
-                accbuf[k] += getbuf[k];
-            }
-        }
-        
-        // send reduced result to each host including self
-        for (j = 0; j < team_size; j++) {
-            dst_rank = (team_rank + j) % team_size;
-            dst_addr = hc->host_rkeys[dst_rank].dst_buf + g_offset + l_offset;
-            
-            CTX_LOG("Issue Put to rank %d src %p dst %p bytes %lu\n", dst_rank,
-                    accbuf, dst_addr, block_size * dt_size);
-            ucp_worker_fence(hc->ucp_worker);
-            request = ucp_put_nbx(hc->host_eps[dst_rank], accbuf, block_size * dt_size,
-                                  (uint64_t)dst_addr, hc->host_dst_rkeys[dst_rank],
-                                  &hc->req_param);
-            status = _dpu_request_wait(hc->ucp_worker, request);
-            assert(UCS_OK == status);
-        }
-
-        done += block_size * team_size;
     }
 }
 
@@ -458,6 +370,7 @@ void dpu_comm_worker(void *arg)
                 if (status_ptr != NULL ) {
                     ucp_request_free(status_ptr);
                 }
+                ucp_rkey_destroy(rkey);
                 
                 CTX_LOG("got the rank list from host \n");
 
