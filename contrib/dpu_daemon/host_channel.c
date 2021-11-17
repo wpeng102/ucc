@@ -843,7 +843,7 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
         }
     }
 
-    for (i=0; i<2; i++) {
+    for (i=0; i<1; i++) {
         dpu_stage_t *stage = &pp->stages[i];
         dpu_buf_t *accbuf = &stage->accbuf;
         dpu_buf_t *getbuf = &stage->getbuf[stage->get_idx];
@@ -945,7 +945,7 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
                         _dpu_hc_reset_stage(stage, hc);
 
                         /* Allow next stage to start */
-                        int next = (i+1) % 2;
+                        int next = 0; //(i+1) % 2;
                         dpu_stage_t *next_stage = &pp->stages[next];
                         DPU_LOG("Next stage %d, state %d\n", next, next_stage->phase);
                         assert(next_stage->phase == WAIT);

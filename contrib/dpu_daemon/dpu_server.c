@@ -25,18 +25,19 @@ dpu_put_sync_t tmp_sync = {0};
 static void dpu_thread_set_affinity(thread_ctx_t *ctx)
 {
     int i;
-    int places = CORES/ctx->nthreads;
+    int places = 6;
     pthread_t thread = pthread_self();
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
 
     if (ctx->idx >= 0) {
-        for (i = 0; i < places; i++) {
-            CPU_SET((ctx->idx * places) + i, &cpuset);
+        for (i = 0; i < places; i+=1) {
+            CPU_SET(i, &cpuset);
         }
     }
     else {
-        CPU_SET(CORES+1, &cpuset);
+        // CPU_SET(6, &cpuset);
+        CPU_SET(7, &cpuset);
     }
 
     pthread_setaffinity_np(thread, sizeof(cpuset), &cpuset);
@@ -563,6 +564,7 @@ void *dpu_worker(void *arg)
             size_t count = accbuf->count;
             int32_t *acc_buf = accbuf->buf;
             int32_t *get_buf = getbuf->buf;
+            #pragma omp parallel for
             for (int k = 0; k < count; k++) {
                 acc_buf[k] += get_buf[k];
             }
@@ -570,6 +572,7 @@ void *dpu_worker(void *arg)
             CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
                     count, ctx->hc->pipeline.count_reduced, ctx->hc->pipeline.my_count);
         done:
+            dpu_coll_do_barrier(ctx, lsync);
             dpu_signal_comm_thread(ctx, thread_sub_sync);
 
         } while (!finished);
