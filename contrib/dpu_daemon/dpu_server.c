@@ -10,7 +10,6 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#include "../../src/utils/ucc_datastruct.h" 
 #include "server_ucc.h"
 #include "host_channel.h"
 #include "ucc/api/ucc.h"
@@ -21,6 +20,11 @@
 thread_sync_t *thread_main_sync = NULL;
 thread_sync_t *thread_sub_sync = NULL;
 dpu_put_sync_t tmp_sync = {0};
+
+/* TODO: export ucc_mc.h */
+ucc_status_t ucc_mc_reduce(const void *src1, const void *src2, void *dst,
+                           size_t count, ucc_datatype_t dtype,
+                           ucc_reduction_op_t op, ucc_memory_type_t mem_type);
 
 static void dpu_thread_set_affinity(thread_ctx_t *ctx)
 {
@@ -41,65 +45,6 @@ static void dpu_thread_set_affinity(thread_ctx_t *ctx)
     }
 
     pthread_setaffinity_np(thread, sizeof(cpuset), &cpuset);
-}
-
-static void dpu_coll_init_allreduce(thread_ctx_t *ctx, ucc_coll_req_h *request, size_t *count_p, dpu_put_sync_t *lsync)
-{
-    *request = NULL;
-
-#if 0
-    int ar_idx = ctx->buf_idx;
-    dpu_stage_t *ar_stage = &ctx->hc->pipeline.stage[ar_idx];
-    assert(ar_stage->get.state == DONE);
-    assert(ar_stage->ar.state  == IN_PROGRESS);
-    assert(ar_stage->put.state == FREE);
-
-    ucc_reduction_op_t op = lsync->op;
-    ucc_datatype_t dtype = lsync->dtype;
-    size_t dt_size = dpu_ucc_dt_size(dtype);
-    size_t count = ar_stage->get.count;
-    size_t block = count / ctx->nthreads;
-    size_t offset = block * ctx->idx * dt_size;
-
-    /* Do any leftover elements in the last thread */
-    if (ctx->idx == ctx->nthreads - 1) {
-        block += count % block;
-    }
-    
-    void *src_buf = ar_stage->get.buf;
-    void *dst_buf = ar_stage->put.buf;
-    *count_p = count;
-    
-    CTX_LOG("Init AR idx %d src %p dst %p count %lu, block %lu, offset %lu, bytes %lu\n",
-             ar_idx, src_buf, dst_buf, count, block, offset, block*dt_size);
-    if (block == 0) {
-        *request = NULL;
-        return;
-    }
-
-    ucc_coll_args_t coll = {
-        .coll_type = UCC_COLL_TYPE_ALLREDUCE,
-        .mask      = UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS,
-        .src.info = {
-            .buffer   = src_buf + offset,
-            .count    = block,
-            .datatype = dtype,
-            .mem_type = UCC_MEMORY_TYPE_HOST,
-        },
-        .dst.info = {
-            .buffer   = dst_buf + offset,
-            .count    = block,
-            .datatype = dtype,
-            .mem_type = UCC_MEMORY_TYPE_HOST,
-        },
-        .reduce = {
-            .predefined_op = op,
-        },
-    };
-
-    UCC_CHECK(ucc_collective_init(&coll, request, ctx->comm.team_pool[lsync->team_id]));
-    assert(*request != NULL);
-#endif
 }
 
 static void dpu_coll_init_alltoall(thread_ctx_t *ctx, ucc_coll_req_h *request, size_t *count_p, dpu_put_sync_t *lsync)
@@ -534,6 +479,8 @@ void *dpu_worker(void *arg)
 
         unsigned int coll_id      = lsync->coll_id;
         ucc_coll_type_t coll_type = lsync->coll_type;
+        ucc_datatype_t dt         = lsync->dtype;
+        ucc_reduction_op_t op     = lsync->op;
         size_t count_total        = lsync->count_total;
         CTX_LOG("Start coll id: %d, type: %d, count total: %lu\n",
                 coll_id, coll_type, count_total);
@@ -549,8 +496,6 @@ void *dpu_worker(void *arg)
             CTX_LOG("Waiting for more data from comm thread\n");
             dpu_waitfor_comm_thread(ctx, thread_sub_sync);
             assert(UCC_COLL_TYPE_ALLREDUCE == lsync->coll_type);
-            //assert(UCC_OP_SUM == lsync->op);
-            //assert(UCC_DT_INT32 == lsync->dtype);
 
             dpu_buf_t *accbuf = thread_sub_sync->accbuf;
             dpu_buf_t *getbuf = thread_sub_sync->getbuf;
@@ -562,13 +507,8 @@ void *dpu_worker(void *arg)
             assert(getbuf->state == REDUCING && getbuf->count > 0 && getbuf->ucp_req == NULL);
 
             size_t count = accbuf->count;
-            int32_t *acc_buf = accbuf->buf;
-            int32_t *get_buf = getbuf->buf;
-            #pragma omp parallel for
-            for (int k = 0; k < count; k++) {
-                acc_buf[k] += get_buf[k];
-            }
-            CTX_LOG("REDUCED DATA accbuf %ld %ld getbuf %ld %ld\n", acc_buf[0], acc_buf[1], get_buf[0], get_buf[1]);
+            ucc_mc_reduce(accbuf->buf, getbuf->buf, accbuf->buf,
+                          count, dt, op, UCC_MEMORY_TYPE_HOST);
             CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
                     count, ctx->hc->pipeline.count_reduced, ctx->hc->pipeline.my_count);
         done:
@@ -578,7 +518,6 @@ void *dpu_worker(void *arg)
         } while (!finished);
 
         ctx->coll_sync.count_serviced = ctx->hc->pipeline.my_count * ctx->hc->world_size;
-        // assert(count_total <= ctx->coll_sync.count_serviced);
         CTX_LOG("End coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
                 coll_id, coll_type, count_total, (size_t)ctx->coll_sync.count_serviced);
         dpu_signal_comm_thread(ctx, thread_main_sync);
