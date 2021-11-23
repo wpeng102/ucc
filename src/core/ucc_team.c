@@ -339,7 +339,7 @@ static inline ucc_status_t ucc_team_exchange(ucc_context_t *context,
         oob.req_free(team->oob_req);
         ucc_assert(team->size >= 2);
         team->ctx_map = ucc_ep_map_from_array(&team->ctx_ranks, team->size,
-                                              context->addr_storage.size, 1);
+                                              context->addr_storage.size, 0);
     }
     ucc_debug("team %p rank %d, ctx_rank %d, map_type %d", team, team->rank,
               context->rank, team->ctx_map.type);
@@ -603,4 +603,24 @@ static void ucc_team_relase_id(ucc_team_t *team)
     if (0 != team->id && !UCC_TEAM_ID_IS_EXTERNAL(team)) {
         set_id_bit(ctx->ids.pool, team->id);
     }
+}
+
+ucc_status_t ucc_team_get_size(ucc_team_h team, uint32_t *size)
+{
+    if (NULL == team) {
+        ucc_error("ucc_team_get_size: invalid team handle: NULL");
+        return UCC_ERR_INVALID_PARAM;
+    }
+    *size = team->size;
+    return UCC_OK;
+}
+
+ucc_status_t ucc_team_get_my_ep(ucc_team_h team, uint64_t *ep)
+{
+    if (NULL == team) {
+        ucc_error("ucc_team_get_my_ep: invalid team handle: NULL");
+        return UCC_ERR_INVALID_PARAM;
+    }
+    *ep = team->rank;
+    return UCC_OK;
 }

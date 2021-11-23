@@ -69,6 +69,8 @@ AC_MSG_RESULT([git sha: $ucc_git_sha])
 CFLAGS_save="$CFLAGS"
 AC_PROG_CC
 AC_PROG_CXX
+: ${enable_openmp=no}
+AC_OPENMP
 AM_PROG_AS
 AC_PROG_LN_S
 AC_PROG_MKDIR_P
@@ -76,6 +78,7 @@ AC_PROG_INSTALL
 AC_PROG_LIBTOOL
 AC_HEADER_STDC
 CFLAGS="$CFLAGS_save"
+AC_MSG_RESULT([OMP: $enable_openmp])
 
 #
 # Check if 'ln' supports creating relative links
@@ -142,6 +145,7 @@ AS_IF([test "x$with_docs_only" = xyes],
      AM_CONDITIONAL([HAVE_CUDA], [false])
      AM_CONDITIONAL([HAVE_NCCL], [false])
      AM_CONDITIONAL([HAVE_SHARP], [false])
+     AM_CONDITIONAL([HAVE_DPU], [false])
      AM_CONDITIONAL([HAVE_MPI], [false])
      AM_CONDITIONAL([HAVE_MPIRUN], [false])
      AM_CONDITIONAL([HAVE_MPICC], [false])
@@ -157,6 +161,7 @@ AS_IF([test "x$with_docs_only" = xyes],
      m4_include([config/m4/cuda.m4])
      m4_include([config/m4/nccl.m4])
      m4_include([config/m4/sharp.m4])
+     m4_include([config/m4/dpu.m4])
      m4_include([config/m4/mpi.m4])
      m4_include([config/m4/configure.m4])
      m4_include([test/gtest/configure.m4])
@@ -190,6 +195,12 @@ AS_IF([test "x$with_docs_only" = xyes],
      if test $sharp_happy = "yes"; then
          tl_modules="${tl_modules}:sharp"
      fi
+ 
+     CHECK_DPU
+     AC_MSG_RESULT([NCCL support: $dpu_happy])
+     if test $dpu_happy = "yes"; then
+         tl_modules="${tl_modules}:dpu"
+     fi
     ]) # Docs only
 
 CFLAGS="$CFLAGS -std=gnu11"
@@ -206,6 +217,7 @@ AC_CONFIG_FILES([
                  src/components/tl/ucp/Makefile
                  src/components/tl/nccl/Makefile
                  src/components/tl/sharp/Makefile
+                 src/components/tl/dpu/Makefile
                  src/components/mc/cpu/Makefile
                  src/components/mc/cuda/Makefile
                  src/components/mc/cuda/kernel/Makefile
