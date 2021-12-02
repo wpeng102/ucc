@@ -132,13 +132,14 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
 {
     ucc_status_t status = UCC_OK;
     ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(task->team);
+    int rail = task->rail;
     void *src_buf = task->args.src.info.buffer;
     void *dst_buf = task->args.dst.info.buffer;
     size_t src_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
     size_t dst_len = task->args.dst.info.count * ucc_dt_size(task->args.dst.info.datatype);
 
-    status |= ucc_tl_dpu_register_buf(ctx->ucp_context, src_buf, src_len, &task->src_rkey);
-    status |= ucc_tl_dpu_register_buf(ctx->ucp_context, dst_buf, dst_len, &task->dst_rkey);
+    status |= ucc_tl_dpu_register_buif(ctx->dpu_ctx_list[rail].ucp_context, src_buf, src_len, &task->src_rkey);
+    status |= ucc_tl_dpu_register_buf(ctx->dpu_ctx_list[rail].ucp_context, dst_buf, dst_len, &task->dst_rkey);
 
     return status;
 }
@@ -146,8 +147,9 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
 static void ucc_tl_dpu_finalize_rkeys(ucc_tl_dpu_task_t *task)
 {
     ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(task->team);
-    ucc_tl_dpu_deregister_buf(ctx->ucp_context, &task->src_rkey);
-    ucc_tl_dpu_deregister_buf(ctx->ucp_context, &task->dst_rkey);
+    int rail = task->rail;
+    ucc_tl_dpu_deregister_buf(ctx->dpu_ctx_list[rail].ucp_context, &task->src_rkey);
+    ucc_tl_dpu_deregister_buf(ctx->dpu_ctx_list[rail].ucp_context, &task->dst_rkey);
 }
 
 static void ucc_tl_dpu_init_put(ucc_tl_dpu_context_t *ctx,
@@ -167,15 +169,16 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
 {
     ucc_tl_dpu_put_request_t *put_req = &task->task_reqs.put_req;
     ucp_request_param_t req_param = {0};
+    int rail = task->rail;
 
     assert(task->status != UCC_TL_DPU_TASK_STATUS_POSTED);
     task->status = UCC_TL_DPU_TASK_STATUS_POSTED;
     ucc_tl_dpu_init_put(ctx, task, team);
     assert(put_req->sync_req == NULL);
 
-    ucp_worker_fence(ctx->ucp_worker);
+    ucp_worker_fence(ctx->dpu_ctx_list[rail].ucp_worker);
     put_req->sync_req =
-        ucp_put_nbx(ctx->ucp_ep, &task->put_sync, sizeof(task->put_sync),
+        ucp_put_nbx(ctx->dpu_ctx_list[rail].ucp_ep, &task->put_sync, sizeof(task->put_sync),
                     team->rem_ctrl_seg, team->rem_ctrl_seg_key,
                     &req_param);
     if (ucc_tl_dpu_req_check(team, put_req->sync_req) != UCC_OK) {
@@ -184,9 +187,9 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     tl_info(UCC_TL_TEAM_LIB(task->team), "Sent task to DPU: %p, coll type %d id %d count %u",
             task, task->put_sync.coll_type, task->put_sync.coll_id, task->put_sync.count_total);
  
-    ucc_tl_dpu_req_wait(ctx->ucp_worker, put_req->sync_req);
+    ucc_tl_dpu_req_wait(ctx->dpu_ctx_list[rail].ucp_worker, put_req->sync_req);
     put_req->sync_req = NULL;
-    // ucp_worker_flush(ctx->ucp_worker);
+    // ucp_worker_flush(ctx->dpu_ctx_list[rail].ucp_worker);
     return UCC_OK;
 }
 
@@ -196,6 +199,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
     int i;
     ucc_tl_dpu_team_t *team = task->team;
     ucc_status_t status;
+    int rail = task->rail;
 
     // tl_info(UCC_TL_TEAM_LIB(task->team), "task status %d coll id %d", task->status, task->put_sync.coll_id);
     if (task->status == UCC_TL_DPU_TASK_STATUS_INIT && task->put_sync.coll_id == team->coll_id_completed + 1) {
@@ -206,27 +210,29 @@ static ucc_status_t ucc_tl_dpu_check_progress(
         }
     }
 
-    // ucp_worker_progress(ctx->ucp_worker);
+    // ucp_worker_progress(ctx->dpu_ctx_list[rail].ucp_worker);
     for (i=0; i<10; i++) {
-        if (ucp_worker_progress(ctx->ucp_worker)) {
+        if (ucp_worker_progress(ctx->dpu_ctx_list[rail].ucp_worker)) {
             break;
         }
     }
 
     if (task->status == UCC_TL_DPU_TASK_STATUS_POSTED) {
-        if (ctx->get_sync.coll_id < task->put_sync.coll_id ||
-            ctx->get_sync.count_serviced < task->put_sync.count_total) {
+        if (ctx->dpu_ctx_list[rail].get_sync.coll_id < task->put_sync.coll_id ||
+            ctx->dpu_ctx_list[rail].get_sync.count_serviced < task->put_sync.count_total) {
             return UCC_INPROGRESS;
         }
         else {
             task->status                     = UCC_TL_DPU_TASK_STATUS_DONE;
-            task->get_sync.coll_id           = ctx->get_sync.coll_id;
-            ctx->get_sync.count_serviced     = ctx->get_sync.count_serviced;
-            ctx->get_sync.coll_id            = 0;
-            ctx->get_sync.count_serviced     = 0;
+            task->get_sync.coll_id           =
+                ctx->dpu_ctx_list[rail].get_sync.coll_id;
+            ctx->dpu_ctx_list[rail].get_sync.count_serviced     =
+                ctx->dpu_ctx_list[rail].get_sync.count_serviced;
+            ctx->dpu_ctx_list[rail].get_sync.coll_id            = 0;
+            ctx->dpu_ctx_list[rail].get_sync.count_serviced     = 0;
 
-            ctx->coll_id_completed++;
-            team->coll_id_completed = ctx->coll_id_completed;
+            ctx->dpu_ctx_list[rail].coll_id_completed++;
+            team->coll_id_completed = ctx->dpu_ctx_list[rail].coll_id_completed;
             assert(team->coll_id_completed == task->get_sync.coll_id);
 
             return UCC_OK;
@@ -272,6 +278,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     ucc_tl_dpu_team_t    *team      = task->team;
     ucc_base_team_t      *base_team = &team->super.super;
     ucc_tl_dpu_context_t *ctx       = UCC_TL_DPU_TEAM_CTX(task->team);
+    int rail                        = task->rail;
 
     if (task->args.mask & UCC_COLL_ARGS_FIELD_USERDEFINED_REDUCTIONS) {
         tl_error(UCC_TL_TEAM_LIB(task->team),
@@ -308,7 +315,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
 
 
     assert(task->status == UCC_TL_DPU_TASK_STATUS_INIT);
-    if (task->put_sync.coll_id == ctx->coll_id_completed + 1) {
+    if (task->put_sync.coll_id == ctx->dpu_ctx_list[rail].coll_id_completed + 1) {
         tl_info(UCC_TL_TEAM_LIB(team), "Put to DPU coll task: %p, coll id %d",
                 task, task->put_sync.coll_id);
         ucc_tl_dpu_issue_put(task, ctx, team);
@@ -411,40 +418,49 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
 {
     ucc_tl_dpu_team_t    *tl_team = ucc_derived_of(team, ucc_tl_dpu_team_t);
     ucc_tl_dpu_context_t *ctx     = UCC_TL_DPU_TEAM_CTX(tl_team);
-    ucc_tl_dpu_task_t    *task    = ucc_mpool_get(&ctx->req_mp);
+    ucc_tl_dpu_task_t    *task;
     ucc_status_t          status;
+    int rail;
 
-    ucc_coll_task_init(&task->super, coll_args, team);
-    tl_info(team->context->lib, "task %p initialized", task);
+    for (rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
 
-    memcpy(&task->args, &coll_args->args, sizeof(ucc_coll_args_t));
+        task = ucc_mpool_get(&ctx->dpu_ctx_list[rail].req_mp);
 
-    /* Misc init stuff */
-    task->team                       = tl_team;
-    task->super.finalize             = ucc_tl_dpu_coll_finalize;
-    task->super.triggered_post       = NULL;
-    task->status                     = UCC_TL_DPU_TASK_STATUS_INIT;
-    
-    //tl_team->coll_id_issued++;
-    ctx->coll_id_issued++;
-    tl_team->coll_id_issued =  ctx->coll_id_issued;
+        ucc_coll_task_init(&task->super, coll_args, team);
+        tl_info(team->context->lib, "task %p initialized", task);
 
-    switch (coll_args->args.coll_type) {
-    case UCC_COLL_TYPE_ALLREDUCE:
-        status = ucc_tl_dpu_allreduce_init(task);
-        break;
-    case UCC_COLL_TYPE_ALLTOALL:
-        status = ucc_tl_dpu_alltoall_init(task);
-        break;
-    default:
-        status = UCC_ERR_NOT_SUPPORTED;
+        memcpy(&task->args, &coll_args->args, sizeof(ucc_coll_args_t));
+
+        /* Misc init stuff */
+        task->team                       = tl_team;
+        task->super.finalize             = ucc_tl_dpu_coll_finalize;
+        task->super.triggered_post       = NULL;
+        task->status                     = UCC_TL_DPU_TASK_STATUS_INIT;
+        task->rail                       = rail;
+        
+        ctx->dpu_ctx_list[rail].coll_id_issued++;
+        /* TODO move this line out of for loop */
+        tl_team->coll_id_issued =  ctx->dpu_ctx_list[rail].coll_id_issued;
+
+        switch (coll_args->args.coll_type) {
+        case UCC_COLL_TYPE_ALLREDUCE:
+            status = ucc_tl_dpu_allreduce_init(task);
+            break;
+        case UCC_COLL_TYPE_ALLTOALL:
+            status = ucc_tl_dpu_alltoall_init(task);
+            break;
+        default:
+            status = UCC_ERR_NOT_SUPPORTED;
+        }
+        if (status != UCC_OK) {
+            ucc_mpool_put(task);
+            return status;
+        }
+
+        tl_info(team->context->lib, "init coll req %p coll id %d", task, tl_team->coll_id_issued);
+        *task_h = &task->super;
+
     }
-    if (status != UCC_OK) {
-        ucc_mpool_put(task);
-        return status;
-    }
 
-    tl_info(team->context->lib, "init coll req %p coll id %d", task, tl_team->coll_id_issued);
-    *task_h = &task->super;
     return status;
 }

@@ -26,6 +26,7 @@
 
 #define MAX_DPU_HOST_NAME 256
 #define MAX_RKEY_LEN      1024
+#define MAX_DPU_COUNT     16 /* Max dpu per node */
 
 typedef enum {
     UCC_TL_DPU_TASK_STATUS_INIT,
@@ -64,9 +65,7 @@ typedef struct ucc_tl_dpu_get_sync_t {
     volatile uint32_t       coll_id;
 } ucc_tl_dpu_get_sync_t;
 
-typedef struct ucc_tl_dpu_context {
-    ucc_tl_context_t            super;
-    ucc_tl_dpu_context_config_t cfg;
+typedef struct ucc_tl_dpu_single_dpu_context {
     ucp_context_h               ucp_context;
     ucp_worker_h                ucp_worker;
     uint64_t                    rem_ctrl_seg;
@@ -77,6 +76,13 @@ typedef struct ucc_tl_dpu_context {
     ucp_ep_h                    ucp_ep;
     ucc_mpool_t                 req_mp;
     volatile size_t             inflight;
+} ucc_tl_dpu_single_dpu_context;
+
+typedef struct ucc_tl_dpu_context {
+    ucc_tl_context_t            super;
+    ucc_tl_dpu_context_config_t cfg;   
+    int dpu_per_node_cnt;
+    ucc_tl_dpu_single_dpu_context dpu_ctx_list[MAX_DPU_COUNT];
 } ucc_tl_dpu_context_t;
 
 UCC_CLASS_DECLARE(ucc_tl_dpu_context_t, const ucc_base_context_params_t *,
@@ -164,6 +170,7 @@ typedef struct ucc_tl_dpu_task {
     ucc_tl_dpu_rkey_t        src_rkey;
     ucc_tl_dpu_rkey_t        dst_rkey;
     volatile ucc_tl_dpu_task_status_t status;
+    int                      rail;
 } ucc_tl_dpu_task_t;
 
 typedef struct ucc_tl_dpu_config {
