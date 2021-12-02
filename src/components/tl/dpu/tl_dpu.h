@@ -170,6 +170,7 @@ typedef struct ucc_tl_dpu_task {
     ucc_tl_dpu_rkey_t        src_rkey;
     ucc_tl_dpu_rkey_t        dst_rkey;
     volatile ucc_tl_dpu_task_status_t status;
+    int                      rail;
 } ucc_tl_dpu_task_t;
 
 typedef struct ucc_tl_dpu_config {
