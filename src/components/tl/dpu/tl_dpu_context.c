@@ -273,9 +273,9 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     return ucc_status;
 
 err_cleanup_mpool:
-        ucc_mpool_cleanup(&self->dpu_ctx_list[rail].req_mp, 1);
+    ucc_mpool_cleanup(&self->dpu_ctx_list[rail].req_mp, 1);
 err_cleanup_worker:
-        ucp_worker_destroy(self->dpu_ctx_list[rail].ucp_worker);
+    ucp_worker_destroy(self->dpu_ctx_list[rail].ucp_worker);
 err_cleanup_context:
     for (i = 0; i < rail-1; i++) {
         ucc_mpool_cleanup(&self->dpu_ctx_list[i].req_mp, 1);
