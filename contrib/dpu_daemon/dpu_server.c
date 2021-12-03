@@ -68,34 +68,44 @@ static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_syn
 
     for(int src_rank = 0; src_rank < team_size; src_rank++) {
         ucs_status_ptr_t ucp_req = NULL;
-        size_t data_size  = my_count * dt_size;
-        size_t src_offset = team_rank * data_size;
-        size_t dst_offset = src_rank * data_size;
+        size_t count_done = 0;
+        size_t src_offset = team_rank * my_count * dt_size;
+        size_t dst_offset = src_rank * my_count * dt_size;
 
-        void * src_addr  = hc->host_rkeys[src_rank].src_buf + src_offset;
-        void * tmp_addr  = hc->pipeline.stages[0].accbuf.buf;
-        void * dst_addr  = lsync->rkeys.dst_buf + dst_offset;
+        while (count_done < my_count) {
+            size_t remaining_elems = my_count - count_done;
+            size_t count_step = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
+            size_t bytes_step = count_step * dt_size;
 
-        DPU_LOG("Issue Get from %d src offset %lu count %lu bytes %lu\n",
-                src_rank, src_offset, my_count, data_size);
-        ucp_worker_fence(hc->ucp_worker);
-        ucp_req = ucp_get_nbx(
-            hc->host_eps[src_rank], tmp_addr, data_size, (uint64_t)src_addr,
-            hc->host_src_rkeys[src_rank], &hc->req_param);
-        status = _dpu_request_wait(hc->ucp_worker, ucp_req);
-        if (status != UCS_OK) {
-            return UCC_ERR_NO_RESOURCE;
-        }
+            void * src_addr  = hc->host_rkeys[src_rank].src_buf + src_offset;
+            void * tmp_addr  = hc->pipeline.stages[0].accbuf.buf;
+            void * dst_addr  = lsync->rkeys.dst_buf + dst_offset;
 
-        DPU_LOG("Issue Put to host dst offset %lu dst offset %lu count %lu bytes %lu\n",
-                dst_offset, my_count, data_size);
-        ucp_worker_fence(hc->ucp_worker);
-        ucp_req = ucp_put_nbx(
-            hc->localhost_ep, tmp_addr, data_size, (uint64_t)dst_addr,
-            hc->dst_rkey, &hc->req_param);
-        status = _dpu_request_wait(hc->ucp_worker, ucp_req);
-        if (status != UCS_OK) {
-            return UCC_ERR_NO_RESOURCE;
+            DPU_LOG("Issue Get from %d src offset %lu count %lu bytes %lu\n",
+                    src_rank, src_offset, my_count, bytes_step);
+            ucp_worker_fence(hc->ucp_worker);
+            ucp_req = ucp_get_nbx(
+                hc->host_eps[src_rank], tmp_addr, bytes_step, (uint64_t)src_addr,
+                hc->host_src_rkeys[src_rank], &hc->req_param);
+            status = _dpu_request_wait(hc->ucp_worker, ucp_req);
+            if (status != UCS_OK) {
+                return UCC_ERR_NO_RESOURCE;
+            }
+
+            DPU_LOG("Issue Put to host dst offset %lu dst offset %lu count %lu bytes %lu\n",
+                    dst_offset, my_count, bytes_step);
+            ucp_worker_fence(hc->ucp_worker);
+            ucp_req = ucp_put_nbx(
+                hc->localhost_ep, tmp_addr, bytes_step, (uint64_t)dst_addr,
+                hc->dst_rkey, &hc->req_param);
+            status = _dpu_request_wait(hc->ucp_worker, ucp_req);
+            if (status != UCS_OK) {
+                return UCC_ERR_NO_RESOURCE;
+            }
+
+            count_done += count_step;
+            src_offset += bytes_step;
+            dst_offset += bytes_step;
         }
     }
 
