@@ -9,7 +9,7 @@
 #include "tl_dpu_coll.h"
 #include "coll_score/ucc_coll_score.h"
 
-ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
+ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team, int rail)
 {
     ucc_tl_dpu_context_t    *ctx = UCC_TL_DPU_TEAM_CTX(team);
     ucc_team_t              *ucc_team = team->super.super.params.team;
@@ -28,11 +28,11 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
     ucs_status_ptr_t                   team_mirroring_signal_req;
     ucp_request_param_t                team_mirror_req_param = {0};
 
-    ctx->coll_id_issued++;
-    team->coll_id_issued = ctx->coll_id_issued;
+    ctx->dpu_ctx_list[rail].coll_id_issued++;
+    team->dpu_sync_list[rail].coll_id_issued = ctx->dpu_ctx_list[rail].coll_id_issued;
 
     team_mirroring_signal.create_new_team      = 1;
-    team_mirroring_signal.coll_id              = ctx->coll_id_issued;
+    team_mirroring_signal.coll_id              = ctx->dpu_ctx_list[rail].coll_id_issued;
     team_mirroring_signal.coll_type            = UCC_COLL_TYPE_LAST;
     team_mirroring_signal.dtype                = UCC_DT_USERDEFINED;
     team_mirroring_signal.op                   = UCC_OP_USERDEFINED;
@@ -45,7 +45,7 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
     team_mirroring_signal.rkeys.rank_list_rkey_len = team->size *
         sizeof(ucc_rank_t);
 
-    ucc_status = ucc_tl_dpu_register_buf(ctx->ucp_context,
+    ucc_status = ucc_tl_dpu_register_buf(ctx->dpu_ctx_list[rail].ucp_context,
             team_mirroring_signal.rkeys.rank_list,
             team_mirroring_signal.rkeys.rank_list_rkey_len,
             rank_list_rkey);
@@ -59,30 +59,35 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
 
 
     tl_info(ctx->super.super.lib, "sending team_mirroring_signal to dpu team, "
-            "coll id = %u and ctx->coll_id_completed=%d ", team_mirroring_signal.coll_id, ctx->coll_id_completed);
+            "coll id = %u and ctx->dpu_ctx_list[%d].coll_id_completed=%d ", 
+            team_mirroring_signal.coll_id, rail,
+            ctx->dpu_ctx_list[rail].coll_id_completed);
 
     /* TODO  get the remote addr/ key rem_ctrl_seg/rem_ctrl_seg_key from the world team */
 
-    team->rem_ctrl_seg = ctx->rem_ctrl_seg;
-    team->rem_ctrl_seg_key = ctx->rem_ctrl_seg_key;
+    team->dpu_sync_list[rail].rem_ctrl_seg = ctx->dpu_ctx_list[rail].rem_ctrl_seg;
+    team->dpu_sync_list[rail].rem_ctrl_seg_key = ctx->dpu_ctx_list[rail].rem_ctrl_seg_key;
 
-    team_mirroring_signal_req = ucp_put_nbx(ctx->ucp_ep, &team_mirroring_signal,
-            sizeof(team_mirroring_signal), ctx->rem_ctrl_seg,
-            ctx->rem_ctrl_seg_key, &team_mirror_req_param);
+    team_mirroring_signal_req = ucp_put_nbx(ctx->dpu_ctx_list[rail].ucp_ep,
+            &team_mirroring_signal, sizeof(team_mirroring_signal),
+            ctx->dpu_ctx_list[rail].rem_ctrl_seg,
+            ctx->dpu_ctx_list[rail].rem_ctrl_seg_key, &team_mirror_req_param);
 
     if (ucc_tl_dpu_req_check(team, team_mirroring_signal_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
     }
 
     /* TODO make this non blocking */
-    while((ucc_tl_dpu_req_test(&team_mirroring_signal_req, ctx->ucp_worker) != UCC_OK)) {
-        ucp_worker_progress(ctx->ucp_worker);
+    while((ucc_tl_dpu_req_test(&team_mirroring_signal_req,
+                    ctx->dpu_ctx_list[rail].ucp_worker) != UCC_OK)) {
+        ucp_worker_progress(ctx->dpu_ctx_list[rail].ucp_worker);
     }
-    ctx->coll_id_completed++;
-    team->coll_id_completed = ctx->coll_id_completed;
+    ctx->dpu_ctx_list[rail].coll_id_completed++;
+    team->dpu_sync_list[rail].coll_id_completed =
+        ctx->dpu_ctx_list[rail].coll_id_completed;
 
-    tl_info(ctx->super.super.lib, "sent team_mirroring_signal to dpu team with ctx->coll_id_completed=%d",
-            ctx->coll_id_completed); 
+    tl_info(ctx->super.super.lib, "sent team_mirroring_signal to dpu team with ctx->dpu_ctx_list[%d].coll_id_completed=%d",
+            rail, ctx->dpu_ctx_list[rail].coll_id_completed); 
 
     team->status = UCC_OK;
 
@@ -107,198 +112,217 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
     tl_info(ctx->super.super.lib, "starting: %p team_create", self);
 
     ucp_request_param_t req_param = {0};
-    int tc_poll = UCC_TL_DPU_TC_POLL, i;
+    int tc_poll = UCC_TL_DPU_TC_POLL, i, rail = 0;
     size_t total_rkey_size = 0;
+    ucc_tl_dpu_sync_t *dpu_sync = NULL;
+    ucc_tl_dpu_connect_t *dpu_connect = NULL;
     
-    self->coll_id_issued   = 0;
-    self->coll_id_completed   = 0;
     self->size      = UCC_TL_TEAM_SIZE(self);
     self->rank      = UCC_TL_TEAM_RANK(self);
     self->status    = UCC_OPERATION_INITIALIZED;
-    self->ctx_rank_rkey.rkey_buf_size = 0;
+    self->dpu_per_node_cnt = ctx->dpu_per_node_cnt;
 
-    /*  avoid preparing the get_sync for teams other than world */
-    if (params->id != 1) {
-        return ucc_tl_dpu_new_team_create_test(self);
-    }
+    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
+        
+        dpu_sync = &self->dpu_sync_list[rail];
+        dpu_connect = &ctx->dpu_ctx_list[rail];
 
-    self->conn_buf  = ucc_malloc(sizeof(ucc_tl_dpu_conn_buf_t),
-                        "Allocate connection buffer");
-    self->conn_buf->mmap_params.field_mask =
-                                UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
-                                UCP_MEM_MAP_PARAM_FIELD_LENGTH;
-    self->conn_buf->mmap_params.address = (void*)&ctx->get_sync;
-    self->conn_buf->mmap_params.length = sizeof(ucc_tl_dpu_get_sync_t);
+        dpu_sync->ctx_rank_rkey.rkey_buf_size = 0;
+        dpu_sync->coll_id_issued              = 0;
+        dpu_sync->coll_id_completed           = 0;
 
-    ucc_status = ucs_status_to_ucc_status(
-            ucp_mem_map(ctx->ucp_context, &self->conn_buf->mmap_params,
-                        &self->get_sync_memh));
-    if (UCC_OK != ucc_status) {
-        goto err;
-    }
+        /*  avoid preparing the get_sync for teams other than world */
+        if (params->id != 1) {
+            ucc_status =  ucc_tl_dpu_new_team_create_test(self, rail);
+            if (ucc_status != UCC_OK) {
+                return ucc_status;
+            }
+            continue;
+        }
 
-    ucc_status = ucs_status_to_ucc_status(
-        ucp_rkey_pack(ctx->ucp_context, self->get_sync_memh,
-                      &self->conn_buf->get_sync_rkey_buf,
-                      &self->conn_buf->get_sync_rkey_buf_size));
-    if (UCC_OK != ucc_status) {
-        goto err;
-    }
+        dpu_sync->conn_buf  = ucc_malloc(sizeof(ucc_tl_dpu_conn_buf_t),
+                            "Allocate connection buffer");
+        dpu_sync->conn_buf->mmap_params.field_mask =
+                                    UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+                                    UCP_MEM_MAP_PARAM_FIELD_LENGTH;
+        dpu_sync->conn_buf->mmap_params.address = (void*)&dpu_connect->get_sync;
+        dpu_sync->conn_buf->mmap_params.length = sizeof(ucc_tl_dpu_get_sync_t);
 
-    self->rem_data_in = ucc_calloc(1, sizeof(uint64_t));
-    self->rem_data_out = ucc_calloc(1, sizeof(uint64_t));
+        ucc_status = ucs_status_to_ucc_status(
+                ucp_mem_map(dpu_connect->ucp_context, &dpu_sync->conn_buf->mmap_params,
+                            &dpu_sync->get_sync_memh));
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
 
-    self->send_req[0] = ucp_tag_send_nbx(ctx->ucp_ep,
-                                    &self->conn_buf->mmap_params.address,
-                                    sizeof(uint64_t),
-                                    UCC_TL_DPU_EXCHANGE_ADDR_TAG,
+        ucc_status = ucs_status_to_ucc_status(
+            ucp_rkey_pack(dpu_connect->ucp_context, dpu_sync->get_sync_memh,
+                          &dpu_sync->conn_buf->get_sync_rkey_buf,
+                          &dpu_sync->conn_buf->get_sync_rkey_buf_size));
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
+
+        dpu_sync->rem_data_in = ucc_calloc(1, sizeof(uint64_t));
+        dpu_sync->rem_data_out = ucc_calloc(1, sizeof(uint64_t));
+
+        dpu_sync->send_req[0] = ucp_tag_send_nbx(dpu_connect->ucp_ep,
+                                        &dpu_sync->conn_buf->mmap_params.address,
+                                        sizeof(uint64_t),
+                                        UCC_TL_DPU_EXCHANGE_ADDR_TAG,
+                                        &req_param);
+        ucc_status = ucc_tl_dpu_req_check(self, dpu_sync->send_req[0]);
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
+
+        dpu_sync->send_req[1] = ucp_tag_send_nbx(dpu_connect->ucp_ep,
+                                        &dpu_sync->conn_buf->get_sync_rkey_buf_size,
+                                        sizeof(size_t),
+                                        UCC_TL_DPU_EXCHANGE_LENGTH_TAG,
+                                        &req_param);
+        ucc_status = ucc_tl_dpu_req_check(self, dpu_sync->send_req[1]);
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
+
+        dpu_sync->send_req[2] = ucp_tag_send_nbx(dpu_connect->ucp_ep,
+                                        dpu_sync->conn_buf->get_sync_rkey_buf,
+                                        dpu_sync->conn_buf->get_sync_rkey_buf_size,
+                                        UCC_TL_DPU_EXCHANGE_RKEY_TAG,
+                                        &req_param);
+        ucc_status = ucc_tl_dpu_req_check(self, dpu_sync->send_req[2]);
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
+
+        dpu_sync->recv_req[0] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+                                    dpu_sync->conn_buf->rem_rkeys_lengths,
+                                    sizeof(dpu_sync->conn_buf->rem_rkeys_lengths),
+                                    UCC_TL_DPU_EXCHANGE_LENGTH_TAG, (uint64_t)-1,
                                     &req_param);
-    ucc_status = ucc_tl_dpu_req_check(self, self->send_req[0]);
-    if (UCC_OK != ucc_status) {
-        goto err;
-    }
+        ucc_status = ucc_tl_dpu_req_check(self, dpu_sync->recv_req[0]);
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
 
-    self->send_req[1] = ucp_tag_send_nbx(ctx->ucp_ep,
-                                    &self->conn_buf->get_sync_rkey_buf_size,
-                                    sizeof(size_t),
-                                    UCC_TL_DPU_EXCHANGE_LENGTH_TAG,
-                                    &req_param);
-    ucc_status = ucc_tl_dpu_req_check(self, self->send_req[1]);
-    if (UCC_OK != ucc_status) {
-        goto err;
-    }
+        for (i = 0; i < tc_poll; i++) {
+            ucp_worker_progress(dpu_connect->ucp_worker);
+            if ((ucc_tl_dpu_req_test(&(dpu_sync->send_req[0]),
+                            dpu_connect->ucp_worker) == UCC_OK) &&
+                (ucc_tl_dpu_req_test(&(dpu_sync->send_req[1]),
+                                     dpu_connect->ucp_worker) == UCC_OK) &&
+                (ucc_tl_dpu_req_test(&(dpu_sync->send_req[2]),
+                                     dpu_connect->ucp_worker) == UCC_OK) &&
+                (ucc_tl_dpu_req_test(&(dpu_sync->recv_req[0]),
+                                     dpu_connect->ucp_worker) == UCC_OK))
+            {
+                self->status = UCC_INPROGRESS; /* Advance connection establishment */
+                break;
+            }
+        }
 
-    self->send_req[2] = ucp_tag_send_nbx(ctx->ucp_ep,
-                                    self->conn_buf->get_sync_rkey_buf,
-                                    self->conn_buf->get_sync_rkey_buf_size,
-                                    UCC_TL_DPU_EXCHANGE_RKEY_TAG,
-                                    &req_param);
-    ucc_status = ucc_tl_dpu_req_check(self, self->send_req[2]);
-    if (UCC_OK != ucc_status) {
-        goto err;
-    }
+        if (UCC_INPROGRESS != self->status) {
+            ucc_status =  UCC_OK;
+            continue;
+        }
 
-    self->recv_req[0] = ucp_tag_recv_nbx(ctx->ucp_worker,
-                                self->conn_buf->rem_rkeys_lengths,
-                                sizeof(self->conn_buf->rem_rkeys_lengths),
-                                UCC_TL_DPU_EXCHANGE_LENGTH_TAG, (uint64_t)-1,
-                                &req_param);
-    ucc_status = ucc_tl_dpu_req_check(self, self->recv_req[0]);
-    if (UCC_OK != ucc_status) {
-        goto err;
-    }
+        ucp_rkey_buffer_release(dpu_sync->conn_buf->get_sync_rkey_buf);
+        dpu_sync->conn_buf->get_sync_rkey_buf = NULL;
 
-    for (i = 0; i < tc_poll; i++) {
-        ucp_worker_progress(ctx->ucp_worker);
-        if ((ucc_tl_dpu_req_test(&(self->send_req[0]), ctx->ucp_worker) == UCC_OK) &&
-            (ucc_tl_dpu_req_test(&(self->send_req[1]), ctx->ucp_worker) == UCC_OK) &&
-            (ucc_tl_dpu_req_test(&(self->send_req[2]), ctx->ucp_worker) == UCC_OK) &&
-            (ucc_tl_dpu_req_test(&(self->recv_req[0]), ctx->ucp_worker) == UCC_OK))
-        {
-            self->status = UCC_INPROGRESS; /* Advance connection establishment */
-            break;
+        total_rkey_size     = dpu_sync->conn_buf->rem_rkeys_lengths[0] +
+                              dpu_sync->conn_buf->rem_rkeys_lengths[1] +
+                              dpu_sync->conn_buf->rem_rkeys_lengths[2];
+        dpu_sync->conn_buf->rem_rkeys = ucc_malloc(total_rkey_size, "rem_rkeys alloc");
+        dpu_sync->recv_req[1]   = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+                                        &dpu_sync->conn_buf->rem_addresses,
+                                        sizeof(dpu_sync->conn_buf->rem_addresses),
+                                        UCC_TL_DPU_EXCHANGE_ADDR_TAG, (uint64_t)-1,
+                                        &req_param);
+        if (ucc_tl_dpu_req_check(self, dpu_sync->recv_req[1]) != UCC_OK) {
+            goto err;
+        }
+
+        dpu_sync->recv_req[2] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+                dpu_sync->conn_buf->rem_rkeys, total_rkey_size,
+                UCC_TL_DPU_EXCHANGE_RKEY_TAG, (uint64_t)-1, &req_param);
+        if (ucc_tl_dpu_req_check(self, dpu_sync->recv_req[2]) != UCC_OK) {
+            goto err;
+        }
+
+        for (i = 0; i < tc_poll; i++) {
+            ucp_worker_progress(dpu_connect->ucp_worker);
+            if ((ucc_tl_dpu_req_test(&dpu_sync->recv_req[1], dpu_connect->ucp_worker) == UCC_OK) &&
+                (ucc_tl_dpu_req_test(&dpu_sync->recv_req[2], dpu_connect->ucp_worker) == UCC_OK))
+            {
+                dpu_sync->status = UCC_OK;
+                break;
+            }
+        }
+        if (UCC_OK != dpu_sync->status) {
+            return UCC_OK;
+        }
+
+        dpu_sync->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
+        ucc_status = ucs_status_to_ucc_status(
+            ucp_ep_rkey_unpack(dpu_connect->ucp_ep, dpu_sync->conn_buf->rem_rkeys,
+                                &dpu_sync->rem_ctrl_seg_key));
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
+
+        dpu_sync->rem_data_in[0] = dpu_sync->conn_buf->rem_addresses[1];
+        ucc_status = ucs_status_to_ucc_status(
+            ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
+                        (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
+                        dpu_sync->conn_buf->rem_rkeys_lengths[0]),
+                        &dpu_sync->rem_data_in_key));
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
+
+        dpu_sync->rem_data_out[0] = dpu_sync->conn_buf->rem_addresses[2];
+        ucc_status = ucs_status_to_ucc_status(
+            ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
+                                (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
+                                dpu_sync->conn_buf->rem_rkeys_lengths[1] +
+                                dpu_sync->conn_buf->rem_rkeys_lengths[0]),
+                           &dpu_sync->rem_data_out_key));
+        if (UCC_OK != ucc_status) {
+            goto err;
+        }
+
+        ucc_free(dpu_sync->conn_buf->rem_rkeys);
+        dpu_sync->conn_buf->rem_rkeys = NULL;
+        ucc_free(dpu_sync->conn_buf);
+
+
+        for (i=0; i<3; i++) {
+            if (dpu_sync->send_req[i]) {
+                ucp_request_free(dpu_sync->send_req[i]);
+            }
+            if (dpu_sync->recv_req[i]) {
+                ucp_request_free(dpu_sync->recv_req[i]);
+            }
+        }
+
+        if (self->status == UCC_OK) {
+            dpu_connect->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
+            dpu_connect->rem_ctrl_seg_key = dpu_sync->rem_ctrl_seg_key; 
         }
     }
-
-    if (UCC_INPROGRESS != self->status) {
-        return UCC_OK;
-    }
-
-    ucp_rkey_buffer_release(self->conn_buf->get_sync_rkey_buf);
-    self->conn_buf->get_sync_rkey_buf = NULL;
-
-    total_rkey_size     = self->conn_buf->rem_rkeys_lengths[0] +
-                          self->conn_buf->rem_rkeys_lengths[1] +
-                          self->conn_buf->rem_rkeys_lengths[2];
-    self->conn_buf->rem_rkeys = ucc_malloc(total_rkey_size, "rem_rkeys alloc");
-    self->recv_req[1]   = ucp_tag_recv_nbx(ctx->ucp_worker,
-                                    &self->conn_buf->rem_addresses,
-                                    sizeof(self->conn_buf->rem_addresses),
-                                    UCC_TL_DPU_EXCHANGE_ADDR_TAG, (uint64_t)-1,
-                                    &req_param);
-    if (ucc_tl_dpu_req_check(self, self->recv_req[1]) != UCC_OK) {
-        goto err;
-    }
-
-    self->recv_req[2] = ucp_tag_recv_nbx(ctx->ucp_worker, self->conn_buf->rem_rkeys,
-                                total_rkey_size,
-                                UCC_TL_DPU_EXCHANGE_RKEY_TAG, (uint64_t)-1,
-                                &req_param);
-    if (ucc_tl_dpu_req_check(self, self->recv_req[2]) != UCC_OK) {
-        goto err;
-    }
-
-    for (i = 0; i < tc_poll; i++) {
-        ucp_worker_progress(ctx->ucp_worker);
-        if ((ucc_tl_dpu_req_test(&self->recv_req[1], ctx->ucp_worker) == UCC_OK) &&
-            (ucc_tl_dpu_req_test(&self->recv_req[2], ctx->ucp_worker) == UCC_OK))
-        {
-            self->status = UCC_OK;
-            break;
-        }
-    }
-    if (UCC_OK != self->status) {
-        return UCC_OK;
-    }
-
-    self->rem_ctrl_seg = self->conn_buf->rem_addresses[0];
-    ucc_status = ucs_status_to_ucc_status(
-        ucp_ep_rkey_unpack(ctx->ucp_ep, self->conn_buf->rem_rkeys,
-                            &self->rem_ctrl_seg_key));
-    if (UCC_OK != ucc_status) {
-        goto err;
-    }
-
-    self->rem_data_in[0] = self->conn_buf->rem_addresses[1];
-    ucc_status = ucs_status_to_ucc_status(
-        ucp_ep_rkey_unpack(ctx->ucp_ep,
-                    (void*)((ptrdiff_t)self->conn_buf->rem_rkeys +
-                    self->conn_buf->rem_rkeys_lengths[0]),
-                    &self->rem_data_in_key));
-    if (UCC_OK != ucc_status) {
-        goto err;
-    }
-
-    self->rem_data_out[0] = self->conn_buf->rem_addresses[2];
-    ucc_status = ucs_status_to_ucc_status(
-        ucp_ep_rkey_unpack(ctx->ucp_ep,
-                            (void*)((ptrdiff_t)self->conn_buf->rem_rkeys +
-                            self->conn_buf->rem_rkeys_lengths[1] +
-                            self->conn_buf->rem_rkeys_lengths[0]),
-                       &self->rem_data_out_key));
-    if (UCC_OK != ucc_status) {
-        goto err;
-    }
-
-    ucc_free(self->conn_buf->rem_rkeys);
-    self->conn_buf->rem_rkeys = NULL;
-    ucc_free(self->conn_buf);
-
-
-    for (i=0; i<3; i++) {
-        if (self->send_req[i]) {
-            ucp_request_free(self->send_req[i]);
-        }
-        if (self->recv_req[i]) {
-            ucp_request_free(self->recv_req[i]);
-        }
-    }
-
-    if (self->status == UCC_OK) {
-        ctx->rem_ctrl_seg = self->conn_buf->rem_addresses[0];
-        ctx->rem_ctrl_seg_key = self->rem_ctrl_seg_key; 
-    }
-
     return self->status;
 err:
-    if (self->conn_buf->rem_rkeys) {
-        ucc_free(self->conn_buf->rem_rkeys);
+    for (i = 0; i < rail; i++) {
+        if (self->dpu_sync_list[i].conn_buf->rem_rkeys) {
+            ucc_free(self->dpu_sync_list[i].conn_buf->rem_rkeys);
+        }
+        if (self->dpu_sync_list[i].conn_buf->get_sync_rkey_buf) {
+            ucp_rkey_buffer_release(self->dpu_sync_list[i].conn_buf->get_sync_rkey_buf);
+            self->dpu_sync_list[i].conn_buf->get_sync_rkey_buf = NULL;
+        }
+        ucc_free(self->dpu_sync_list[i].conn_buf);
     }
-    if (self->conn_buf->get_sync_rkey_buf) {
-        ucp_rkey_buffer_release(self->conn_buf->get_sync_rkey_buf);
-        self->conn_buf->get_sync_rkey_buf = NULL;
-    }
-    ucc_free(self->conn_buf);
 
     return ucc_status;
 }

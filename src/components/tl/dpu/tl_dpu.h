@@ -65,7 +65,7 @@ typedef struct ucc_tl_dpu_get_sync_t {
     volatile uint32_t       coll_id;
 } ucc_tl_dpu_get_sync_t;
 
-typedef struct ucc_tl_dpu_single_dpu_context {
+typedef struct ucc_tl_dpu_connect {
     ucp_context_h               ucp_context;
     ucp_worker_h                ucp_worker;
     uint64_t                    rem_ctrl_seg;
@@ -76,13 +76,13 @@ typedef struct ucc_tl_dpu_single_dpu_context {
     ucp_ep_h                    ucp_ep;
     ucc_mpool_t                 req_mp;
     volatile size_t             inflight;
-} ucc_tl_dpu_single_dpu_context;
+} ucc_tl_dpu_connect_t;
 
 typedef struct ucc_tl_dpu_context {
     ucc_tl_context_t            super;
     ucc_tl_dpu_context_config_t cfg;   
-    int dpu_per_node_cnt;
-    ucc_tl_dpu_single_dpu_context dpu_ctx_list[MAX_DPU_COUNT];
+    int                         dpu_per_node_cnt;
+    ucc_tl_dpu_connect_t        dpu_ctx_list[MAX_DPU_COUNT];
 } ucc_tl_dpu_context_t;
 
 UCC_CLASS_DECLARE(ucc_tl_dpu_context_t, const ucc_base_context_params_t *,
@@ -133,11 +133,7 @@ typedef struct ucc_tl_dpu_rkey_t {
     size_t    rkey_buf_size;
 } ucc_tl_dpu_rkey_t;
 
-typedef struct ucc_tl_dpu_team {
-    ucc_tl_team_t         super;
-    ucc_status_t          status;
-    ucc_rank_t            size;
-    ucc_rank_t            rank;
+typedef struct ucc_tl_dpu_sync {
     uint32_t              coll_id_issued;
     uint32_t              coll_id_completed;
     ucc_tl_dpu_get_sync_t get_sync;
@@ -152,6 +148,15 @@ typedef struct ucc_tl_dpu_team {
     ucs_status_ptr_t      send_req[3];
     ucs_status_ptr_t      recv_req[3];
     ucc_tl_dpu_conn_buf_t *conn_buf;
+} ucc_tl_dpu_sync_t;
+
+typedef struct ucc_tl_dpu_team {
+    ucc_tl_team_t         super;
+    ucc_status_t          status;
+    ucc_rank_t            size;
+    ucc_rank_t            rank;
+    int                   dpu_per_node_cnt;
+    ucc_tl_dpu_sync_t     dpu_sync_list[MAX_DPU_COUNT];
 } ucc_tl_dpu_team_t;
 UCC_CLASS_DECLARE(ucc_tl_dpu_team_t, ucc_base_context_t *,
                   const ucc_base_team_params_t *);
