@@ -74,12 +74,12 @@ typedef struct ucc_tl_dpu_connect {
     uint32_t                    coll_id_completed;
     ucc_tl_dpu_get_sync_t       get_sync; 
     ucp_ep_h                    ucp_ep;
-    ucc_mpool_t                 req_mp;
     volatile size_t             inflight;
 } ucc_tl_dpu_connect_t;
 
 typedef struct ucc_tl_dpu_context {
     ucc_tl_context_t            super;
+    ucc_mpool_t                 req_mp;
     ucc_tl_dpu_context_config_t cfg;   
     int                         dpu_per_node_cnt;
     ucc_tl_dpu_connect_t        dpu_ctx_list[MAX_DPU_COUNT];
@@ -165,17 +165,22 @@ typedef struct ucc_tl_dpu_task_req_t {
     ucc_tl_dpu_put_request_t put_req;
 } ucc_tl_dpu_task_req_t;
 
-typedef struct ucc_tl_dpu_task {
-    ucc_coll_task_t          super;
-    ucc_coll_args_t          args;
-    ucc_tl_dpu_team_t        *team;
+typedef struct ucc_tl_dpu_sub_task {
     ucc_tl_dpu_put_sync_t    put_sync;
     ucc_tl_dpu_get_sync_t    get_sync;
     ucc_tl_dpu_task_req_t    task_reqs;
     ucc_tl_dpu_rkey_t        src_rkey;
     ucc_tl_dpu_rkey_t        dst_rkey;
     volatile ucc_tl_dpu_task_status_t status;
-    int                      rail;
+} ucc_tl_dpu_sub_task_t;
+
+typedef struct ucc_tl_dpu_task {
+    ucc_coll_task_t          super;
+    ucc_coll_args_t          args;
+    ucc_tl_dpu_team_t        *team;
+    volatile ucc_tl_dpu_task_status_t status;
+    int                      dpu_per_node_cnt;
+    ucc_tl_dpu_sub_task_t    dpu_task_list[MAX_DPU_COUNT];
 } ucc_tl_dpu_task_t;
 
 typedef struct ucc_tl_dpu_config {

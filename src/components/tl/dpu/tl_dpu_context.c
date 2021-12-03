@@ -248,15 +248,6 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
             goto err_cleanup_worker;
         }
 
-        ucc_status = ucc_mpool_init(&self->dpu_ctx_list[rail].req_mp, 0,
-                sizeof(ucc_tl_dpu_task_t), 0, UCC_CACHE_LINE_SIZE, 8, UINT_MAX,
-                &ucc_tl_dpu_req_mpool_ops, worker_params.thread_mode,
-                "tl_dpu_req_mp");
-        if (UCC_OK != ucc_status) {
-            tl_error(self->super.super.lib, "failed to initialize tl_dpu_req mpool");
-            goto err_cleanup_mpool;
-        }
-
         self->dpu_ctx_list[rail].ucp_context                 = ucp_context;
         self->dpu_ctx_list[rail].ucp_worker                  = ucp_worker;
         self->dpu_ctx_list[rail].ucp_ep                      = ucp_ep;
@@ -265,7 +256,15 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
         self->dpu_ctx_list[rail].coll_id_completed           = 0;
         self->dpu_ctx_list[rail].get_sync.count_serviced     = 0;
         self->dpu_ctx_list[rail].get_sync.coll_id            = 0;
+    }
 
+    ucc_status = ucc_mpool_init(&self->req_mp, 0,
+            sizeof(ucc_tl_dpu_task_t), 0, UCC_CACHE_LINE_SIZE, 8, UINT_MAX,
+            &ucc_tl_dpu_req_mpool_ops, worker_params.thread_mode,
+            "tl_dpu_req_mp");
+    if (UCC_OK != ucc_status) {
+        tl_error(self->super.super.lib, "failed to initialize tl_dpu_req mpool");
+        goto err_cleanup_mpool;
     }
 
     self->dpu_per_node_cnt = dpu_count;
@@ -273,12 +272,11 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     return ucc_status;
 
 err_cleanup_mpool:
-    ucc_mpool_cleanup(&self->dpu_ctx_list[rail].req_mp, 1);
+    ucc_mpool_cleanup(&self->req_mp, 1);
 err_cleanup_worker:
     ucp_worker_destroy(self->dpu_ctx_list[rail].ucp_worker);
 err_cleanup_context:
     for (i = 0; i < rail-1; i++) {
-        ucc_mpool_cleanup(&self->dpu_ctx_list[i].req_mp, 1);
         ucp_worker_destroy(self->dpu_ctx_list[i].ucp_worker);
     }
     ucp_cleanup(self->ucp_context);
