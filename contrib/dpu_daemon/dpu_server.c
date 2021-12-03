@@ -66,13 +66,14 @@ static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_syn
 
     CTX_LOG("Doing alltoall on team id %d team size %d count %lu\n", lsync->team_id, team_size, count_total);
 
-    for(int src_rank = 0; src_rank < team_size; src_rank++) {
-        ucs_status_ptr_t ucp_req = NULL;
-        size_t count_done = 0;
+    for(int i = 0; i < team_size; i++) {
+        int src_rank = (team_rank + i) % team_size;
         size_t src_offset = team_rank * my_count * dt_size;
         size_t dst_offset = src_rank * my_count * dt_size;
+        size_t count_done = 0;
 
         while (count_done < my_count) {
+            ucs_status_ptr_t ucp_req = NULL;
             size_t remaining_elems = my_count - count_done;
             size_t count_step = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
             size_t bytes_step = count_step * dt_size;
