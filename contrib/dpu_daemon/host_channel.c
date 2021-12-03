@@ -118,13 +118,12 @@ err_ip:
     return UCC_ERR_NO_MESSAGE;
 }
 
-static int _dpu_listen_cleanup(dpu_hc_t *hc)
+static void _dpu_listen_cleanup(dpu_hc_t *hc)
 {
+    DPU_LOG("Cleaning up host channel\n");
     close(hc->listenfd);
     free(hc->ip);
     free(hc->hname);
-    ucp_rkey_destroy(hc->src_rkey);
-    ucp_rkey_destroy(hc->dst_rkey);
     ucp_rkey_destroy(hc->sync_rkey);
 }
 
