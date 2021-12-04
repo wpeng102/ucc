@@ -139,7 +139,7 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
     size_t dst_len = task->args.dst.info.count * ucc_dt_size(task->args.dst.info.datatype);
 
     for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
-        status |= ucc_tl_dpu_register_buif(ctx->dpu_ctx_list[rail].ucp_context,
+        status |= ucc_tl_dpu_register_buf(ctx->dpu_ctx_list[rail].ucp_context,
                 src_buf, src_len, &task->dpu_task_list[rail].src_rkey);
         status |= ucc_tl_dpu_register_buf(ctx->dpu_ctx_list[rail].ucp_context,
                 dst_buf, dst_len, &task->dpu_task_list[rail].dst_rkey);
@@ -149,10 +149,16 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
 
 static void ucc_tl_dpu_finalize_rkeys(ucc_tl_dpu_task_t *task)
 {
+    int rail;
     ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(task->team);
-    int rail = task->rail;
-    ucc_tl_dpu_deregister_buf(ctx->dpu_ctx_list[rail].ucp_context, &task->src_rkey);
-    ucc_tl_dpu_deregister_buf(ctx->dpu_ctx_list[rail].ucp_context, &task->dst_rkey);
+
+    for (rail = 0; rail < ctx->dpu_per_node_cnt; rail++) { 
+        ucc_tl_dpu_deregister_buf(ctx->dpu_ctx_list[rail].ucp_context,
+                &task->dpu_task_list[rail].src_rkey);
+        ucc_tl_dpu_deregister_buf(ctx->dpu_ctx_list[rail].ucp_context,
+                &task->dpu_task_list[rail].dst_rkey);
+        task->dpu_task_list[rail].status = UCC_TL_DPU_TASK_STATUS_FINALIZED; 
+    }
 }
 
 static void ucc_tl_dpu_init_put(ucc_tl_dpu_context_t *ctx,
@@ -175,7 +181,7 @@ static void ucc_tl_dpu_init_put(ucc_tl_dpu_context_t *ctx,
 static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     ucc_tl_dpu_context_t *ctx, ucc_tl_dpu_team_t *team, int rail)
 {
-    ucc_tl_dpu_put_request_t *put_req = &task->task_reqs.put_req;
+    ucc_tl_dpu_put_request_t *put_req = &task->dpu_task_list[rail].task_reqs.put_req;
     ucp_request_param_t req_param = {0};
     ucc_tl_dpu_sub_task_t *dpu_task = &task->dpu_task_list[rail];
 
@@ -187,8 +193,8 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     ucp_worker_fence(ctx->dpu_ctx_list[rail].ucp_worker);
     put_req->sync_req =
         ucp_put_nbx(ctx->dpu_ctx_list[rail].ucp_ep, &dpu_task->put_sync,
-                sizeof(dpu_task->put_sync), team->rem_ctrl_seg,
-                team->rem_ctrl_seg_key, &req_param);
+                sizeof(dpu_task->put_sync), team->dpu_sync_list[rail].rem_ctrl_seg,
+                team->dpu_sync_list[rail].rem_ctrl_seg_key, &req_param);
     if (ucc_tl_dpu_req_check(team, put_req->sync_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
     }
@@ -219,7 +225,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
                     team->dpu_sync_list[rail].coll_id_completed + 1) {
                 tl_info(UCC_TL_TEAM_LIB(task->team), 
                         "Put to DPU rail: %d coll task: %p, coll id %d", 
-                        rail, task, task->dpu_sync_list[rail].put_sync.coll_id);
+                        rail, task, task->dpu_task_list[rail].put_sync.coll_id);
                 status = ucc_tl_dpu_issue_put(task, ctx, team, rail);
                 if (UCC_OK != status) {
                     return UCC_INPROGRESS;
@@ -478,8 +484,8 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
     //assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
     //assert(task->get_sync.coll_id == task->put_sync.coll_id);
     //assert(task->get_sync.count_serviced == task->put_sync.count_total);
-    task->status = UCC_TL_DPU_TASK_STATUS_FINALIZED;
     ucc_tl_dpu_finalize_rkeys(task);
+    task->status = UCC_TL_DPU_TASK_STATUS_FINALIZED;
     ucc_mpool_put(task);
     return UCC_OK;
 }

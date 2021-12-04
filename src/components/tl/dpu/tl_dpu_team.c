@@ -22,7 +22,7 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team, int rail)
         return team->status;
     }
 
-    ucc_tl_dpu_rkey_t *rank_list_rkey = &team->ctx_rank_rkey;
+    ucc_tl_dpu_rkey_t *rank_list_rkey = &team->dpu_sync_list[rail].ctx_rank_rkey;
 
     ucc_tl_dpu_put_sync_t              team_mirroring_signal;
     ucs_status_ptr_t                   team_mirroring_signal_req;
@@ -255,8 +255,11 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
             if ((ucc_tl_dpu_req_test(&dpu_sync->recv_req[1], dpu_connect->ucp_worker) == UCC_OK) &&
                 (ucc_tl_dpu_req_test(&dpu_sync->recv_req[2], dpu_connect->ucp_worker) == UCC_OK))
             {
-                dpu_sync->status = UCC_OK;
-                break;
+                if (rail == self->dpu_per_node_cnt - 1) { 
+                    dpu_sync->status = UCC_OK;
+                    break;
+                }
+                continue;
             }
         }
         if (UCC_OK != dpu_sync->status) {

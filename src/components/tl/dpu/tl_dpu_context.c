@@ -110,7 +110,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
             while (fscanf(fp,"%s", h) != EOF) {
                 if (strcmp(h, hname) == 0) {
                     for (rail = 0; rail < MAX_DPU_COUNT; rail++) {
-                        dpu = dpu_hnames + rail;
+                        dpu = *(dpu_hnames + rail);
                         memset(dpu, 0, MAX_DPU_HOST_NAME);
                         fscanf(fp, "%s", dpu); 
                         if(strchr(dpu, ',') != NULL)
@@ -169,7 +169,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
     /* Start connecting to all the DPUs */
     for (rail = 0; rail < dpu_count; rail++) {
-        dpu = dpu_hnames + rail; 
+        dpu = *(dpu_hnames + rail);
 
         tl_info(self->super.super.lib, "Connecting to %s", dpu);
 
