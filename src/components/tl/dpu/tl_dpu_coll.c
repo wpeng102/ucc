@@ -359,7 +359,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     /* Set sync information for DPU */
     for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
 
-        task_put_sync = &task->dpu_task_list[rail].put_sync
+        task_put_sync = &task->dpu_task_list[rail].put_sync;
 
         task_put_sync->coll_id           =
         team->dpu_sync_list[rail].coll_id_issued;
@@ -452,7 +452,7 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
     /* Set sync information for DPU */
     for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
 
-        task_put_sync = &task->dpu_task_list[rail].put_sync
+        task_put_sync = &task->dpu_task_list[rail].put_sync;
 
         task_put_sync->coll_id           = team->dpu_sync_list[rail].coll_id_issued;
         task_put_sync->dtype             = coll_args->src.info.datatype;
