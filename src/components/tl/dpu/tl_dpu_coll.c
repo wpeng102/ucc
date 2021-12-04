@@ -471,13 +471,14 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
     ucc_tl_dpu_task_t *task = ucc_derived_of(coll_task, ucc_tl_dpu_task_t);
     tl_info(UCC_TL_TEAM_LIB(task->team),
             "finalizing task %p, task status %d, coll status %d, coll id %u",
-            task, task->status, coll_task->super.status, task->get_sync.coll_id);
+            task, task->status, coll_task->super.status,
+            task->dpu_task_list[0].get_sync.coll_id);
 
     assert(coll_task->super.status == UCC_OK);
     if(task->status == UCC_TL_DPU_TASK_STATUS_FINALIZED) {
         tl_warn(UCC_TL_TEAM_LIB(task->team),
                  "task %p already finalized, status %d, coll id %u",
-                 task, task->status, task->get_sync.coll_id);
+                 task, task->status, task->dpu_task_list[0].get_sync.coll_id);
         return UCC_OK;
     }
 

@@ -275,11 +275,13 @@ err_cleanup_mpool:
     ucc_mpool_cleanup(&self->req_mp, 1);
 err_cleanup_worker:
     ucp_worker_destroy(self->dpu_ctx_list[rail].ucp_worker);
+    ucp_cleanup(self->dpu_ctx_list[rail].ucp_context);
 err_cleanup_context:
     for (i = 0; i < rail-1; i++) {
         ucp_worker_destroy(self->dpu_ctx_list[i].ucp_worker);
+        ucp_cleanup(self->dpu_ctx_list[i].ucp_context);
     }
-    ucp_cleanup(self->ucp_context);
+
 err:
     return ucc_status;
 }
@@ -289,25 +291,31 @@ UCC_CLASS_CLEANUP_FUNC(ucc_tl_dpu_context_t)
     ucp_request_param_t param;
     ucs_status_t ucs_status;
     ucs_status_ptr_t close_req;
+    int rail;
 
     tl_info(self->super.super.lib, "finalizing tl context: %p", self);
-    ucp_worker_flush(self->ucp_worker);
+    
+    for (rail = 0; rail < dpu_count; rail++) {
+    
+        ucp_worker_flush(self->dpu_ctx_list[rail].ucp_worker);
 
-    param.op_attr_mask  = UCP_OP_ATTR_FIELD_FLAGS;
-    param.flags         = UCP_EP_CLOSE_FLAG_FORCE;
-    close_req           = ucp_ep_close_nbx(self->ucp_ep, &param);
-    if (UCS_PTR_IS_PTR(close_req)) {
-        do {
-            ucp_worker_progress(self->ucp_worker);
-            ucs_status = ucp_request_check_status(close_req);
-        } while (ucs_status == UCS_INPROGRESS);
-        ucp_request_free (close_req);
-    } else if (UCS_PTR_STATUS(close_req) != UCS_OK) {
-        tl_error(self->super.super.lib, "failed to close ep %p\n", (void *)self->ucp_ep);
+        param.op_attr_mask  = UCP_OP_ATTR_FIELD_FLAGS;
+        param.flags         = UCP_EP_CLOSE_FLAG_FORCE;
+        close_req           = ucp_ep_close_nbx(self->dpu_ctx_list[rail].ucp_ep, &param);
+        if (UCS_PTR_IS_PTR(close_req)) {
+            do {
+                ucp_worker_progress(self->dpu_ctx_list[rail].ucp_worker);
+                ucs_status = ucp_request_check_status(close_req);
+            } while (ucs_status == UCS_INPROGRESS);
+            ucp_request_free (close_req);
+        } else if (UCS_PTR_STATUS(close_req) != UCS_OK) {
+            tl_error(self->super.super.lib, "failed to close ep %p\n", (void *)self->dpu_ctx_list[rail].ucp_ep);
+        }
+        ucp_worker_destroy(self->dpu_ctx_list[rail].ucp_worker);
+        ucp_cleanup(self->dpu_ctx_list[rail].ucp_context);
     }
+
     ucc_mpool_cleanup(&self->req_mp, 1);
-    ucp_worker_destroy(self->ucp_worker);
-    ucp_cleanup(self->ucp_context);
 }
 
 UCC_CLASS_DEFINE(ucc_tl_dpu_context_t, ucc_tl_context_t);
