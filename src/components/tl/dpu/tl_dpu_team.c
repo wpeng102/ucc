@@ -356,59 +356,74 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
     ucc_tl_dpu_put_sync_t       hangup;
     ucs_status_ptr_t            hangup_req;
     ucp_request_param_t         req_param = {0};
+    ucc_tl_dpu_sync_t           *dpu_sync = NULL;
+    ucc_tl_dpu_connect_t        *dpu_connect = NULL;
+    int rail;
 
     /* Send notification to dpu for releasing the mirroring team on
      * dpu world (if it is releasing a subcomm's team) or ask dpu to 
      * finalize (if it is releasing comm world'd team) */
 
-    hangup.coll_id      = ++ctx->coll_id_issued;
-    team->coll_id_issued = ctx->coll_id_issued;
-    hangup.coll_type    = UCC_COLL_TYPE_LAST;
-    hangup.dtype        = UCC_DT_USERDEFINED;
-    hangup.op           = UCC_OP_USERDEFINED;
-    hangup.team_id      = team_id;
-    hangup.create_new_team = 0;
- 
-    tl_info(ctx->super.super.lib, "sending hangup/team_free to dpu team, coll id = %u", hangup.coll_id);
-    hangup_req = ucp_put_nbx(ctx->ucp_ep, &hangup, sizeof(hangup),
-                             team->rem_ctrl_seg, team->rem_ctrl_seg_key,
-                             &req_param);
-    if (ucc_tl_dpu_req_check(team, hangup_req) != UCC_OK) {
-        return UCC_ERR_NO_MESSAGE;
-    }
-    while((ucc_tl_dpu_req_test(&hangup_req, ctx->ucp_worker) != UCC_OK)) {
-        ucp_worker_progress(ctx->ucp_worker);
-    }
-    tl_info(ctx->super.super.lib, "sent hangup/team_free to dpu team");
+    for (rail = 0; rail < team->dpu_per_node_cnt; rail++) {
 
-    ucp_request_param_t param = {};
-    ucs_status_ptr_t request = ucp_worker_flush_nbx(ctx->ucp_worker, &param);
-    while((ucc_tl_dpu_req_test(&request, ctx->ucp_worker) != UCC_OK)) {
-        ucp_worker_progress(ctx->ucp_worker);
-    }
- 
-    if (team_id != 1) {
-        /* destroying a team for a sub comm other than world  */
-        ucc_tl_dpu_deregister_buf(ctx->ucp_context, &team->ctx_rank_rkey);
-        fprintf(stderr, "destroyed a subcomm dpu team with  team_id=%d \n",
-                team_id);
-    } else {
-        /* It is destroying the world team */
-        ucp_rkey_destroy(team->rem_ctrl_seg_key);
-        ucp_rkey_destroy(team->rem_data_in_key);
-        ucp_rkey_destroy(team->rem_data_out_key);
-        ucp_mem_unmap(ctx->ucp_context, team->get_sync_memh);
+        dpu_sync = &team->dpu_sync_list[rail];
+        dpu_connect = &ctx->dpu_ctx_list[rail];
+        
+        memset(&hangup, 0, sizeof(ucc_tl_dpu_put_sync_t));
 
-        ucc_free(team->rem_data_in);
-        ucc_free(team->rem_data_out);
+        hangup.coll_id           = ++dpu_connect->coll_id_issued;
+        dpu_sync->coll_id_issued = dpu_connect->coll_id_issued;
+        hangup.coll_type         = UCC_COLL_TYPE_LAST;
+        hangup.dtype             = UCC_DT_USERDEFINED;
+        hangup.op                = UCC_OP_USERDEFINED;
+        hangup.team_id           = team_id;
+        hangup.create_new_team   = 0;
+     
+        tl_info(ctx->super.super.lib, 
+                "sending hangup/team_free to dpu dpu_sync, coll id = %u", 
+                hangup.coll_id);
+        hangup_req = ucp_put_nbx(dpu_connect->ucp_ep, &hangup, sizeof(hangup),
+                                 dpu_sync->rem_ctrl_seg, dpu_sync->rem_ctrl_seg_key,
+                                 &req_param);
+        if (ucc_tl_dpu_req_check(team, hangup_req) != UCC_OK) {
+            return UCC_ERR_NO_MESSAGE;
+        }
+        while((ucc_tl_dpu_req_test(&hangup_req, dpu_connect->ucp_worker) != UCC_OK)) {
+            ucp_worker_progress(dpu_connect->ucp_worker);
+        }
+        tl_info(ctx->super.super.lib, "sent hangup/team_free to dpu team");
+
+        ucp_request_param_t param = {};
+        ucs_status_ptr_t request = ucp_worker_flush_nbx(dpu_connect->ucp_worker, &param);
+        while((ucc_tl_dpu_req_test(&request, dpu_connect->ucp_worker) != UCC_OK)) {
+            ucp_worker_progress(dpu_connect->ucp_worker);
+        }
+     
+        if (team_id != 1) {
+            /* destroying a team for a sub comm other than world  */
+            ucc_tl_dpu_deregister_buf(dpu_connect->ucp_context, &dpu_sync->ctx_rank_rkey);
+            fprintf(stderr, "destroyed a subcomm dpu team with  team_id=%d \n",
+                    team_id);
+        } else {
+            /* It is destroying the world team */
+            ucp_rkey_destroy(dpu_sync->rem_ctrl_seg_key);
+            ucp_rkey_destroy(dpu_sync->rem_data_in_key);
+            ucp_rkey_destroy(dpu_sync->rem_data_out_key);
+            ucp_mem_unmap(dpu_connect->ucp_context, dpu_sync->get_sync_memh);
+
+            ucc_free(dpu_sync->rem_data_in);
+            ucc_free(dpu_sync->rem_data_out);
+        }
+
+        dpu_connect->coll_id_completed++;
+        dpu_sync->coll_id_completed = dpu_connect->coll_id_completed;
+    
     }
 
     if (hangup_req) {
         ucp_request_free(hangup_req);
     }
     
-    ctx->coll_id_completed++;
-    team->coll_id_completed = ctx->coll_id_completed;
     UCC_CLASS_DELETE_FUNC_NAME(ucc_tl_dpu_team_t)(tl_team);
 
     return UCC_OK;

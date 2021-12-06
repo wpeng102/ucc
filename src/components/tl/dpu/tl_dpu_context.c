@@ -163,7 +163,6 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     ep_params.field_mask        = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS      |
                                   UCP_EP_PARAM_FIELD_ERR_HANDLER         |
                                   UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    ep_params.address           = rem_worker_addr;
     ep_params.err_mode          = UCP_ERR_HANDLING_MODE_PEER;
     ep_params.err_handler.cb    = err_cb;
 
@@ -225,6 +224,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
             goto err;
         }
         rem_worker_addr = ucc_malloc(rem_worker_addr_size, "rem_worker_addr");
+        ep_params.address = rem_worker_addr;
         if (NULL == rem_worker_addr) {
             tl_error(self->super.super.lib, "failed to allocate rem_worker_addr");
             ucc_status = UCC_ERR_NO_MESSAGE;
@@ -295,7 +295,7 @@ UCC_CLASS_CLEANUP_FUNC(ucc_tl_dpu_context_t)
 
     tl_info(self->super.super.lib, "finalizing tl context: %p", self);
     
-    for (rail = 0; rail < dpu_count; rail++) {
+    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
     
         ucp_worker_flush(self->dpu_ctx_list[rail].ucp_worker);
 

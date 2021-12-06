@@ -309,7 +309,7 @@ ucc_status_t ucc_tl_dpu_allreduce_start(ucc_coll_task_t *coll_task)
     ucc_tl_dpu_team_t    *team        = task->team;
     ucc_status_t         status;
 
-    tl_info(UCC_TL_TEAM_LIB(task->team), "Allreduce start task %p coll id %d", task, task->put_sync.coll_id);
+    tl_info(UCC_TL_TEAM_LIB(task->team), "Allreduce start task %p coll id %d", task, task->dpu_task_list[0].put_sync.coll_id);
 
     coll_task->super.status = UCC_INPROGRESS;
     status = ucc_tl_dpu_allreduce_progress(coll_task);
