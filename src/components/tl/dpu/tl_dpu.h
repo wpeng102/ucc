@@ -148,6 +148,7 @@ typedef struct ucc_tl_dpu_sync {
     ucs_status_ptr_t      send_req[3];
     ucs_status_ptr_t      recv_req[3];
     ucc_tl_dpu_conn_buf_t *conn_buf;
+    ucc_status_t          status;
 } ucc_tl_dpu_sync_t;
 
 typedef struct ucc_tl_dpu_team {
