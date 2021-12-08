@@ -98,7 +98,7 @@ err:
 UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
                     const ucc_base_team_params_t *params)
 {
-    ucc_status_t ucc_status = UCC_OK; 
+    ucc_status_t ucc_status = UCC_OK, status = UCC_INPROGRESS; 
     ucc_tl_dpu_context_t *ctx =
         ucc_derived_of(tl_context, ucc_tl_dpu_context_t);
 
@@ -203,6 +203,12 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
         if (UCC_OK != ucc_status) {
             goto err;
         }
+    }
+
+    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
+
+        dpu_sync = &self->dpu_sync_list[rail];
+        dpu_connect = &ctx->dpu_ctx_list[rail];
 
         for (i = 0; i < tc_poll; i++) {
             ucp_worker_progress(dpu_connect->ucp_worker);
@@ -221,9 +227,17 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
         }
 
         if (UCC_INPROGRESS != dpu_sync->status) {
-            ucc_status = UCC_OK;
-            continue;
-        }
+            status = UCC_OK;
+        } 
+    }
+    if (status == UCC_OK) {
+        return status;
+    }
+
+    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
+
+        dpu_sync = &self->dpu_sync_list[rail];
+        dpu_connect = &ctx->dpu_ctx_list[rail];
 
         ucp_rkey_buffer_release(dpu_sync->conn_buf->get_sync_rkey_buf);
         dpu_sync->conn_buf->get_sync_rkey_buf = NULL;
@@ -247,6 +261,12 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
         if (ucc_tl_dpu_req_check(self, dpu_sync->recv_req[2]) != UCC_OK) {
             goto err;
         }
+    }
+
+    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
+
+        dpu_sync = &self->dpu_sync_list[rail];
+        dpu_connect = &ctx->dpu_ctx_list[rail];
 
         for (i = 0; i < tc_poll; i++) {
             ucp_worker_progress(dpu_connect->ucp_worker);
@@ -259,9 +279,18 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
         }
 
         if (UCC_OK != dpu_sync->status) {
-            ucc_status = UCC_OK;
-            continue;
+            status = UCC_OK;
         }
+    }
+
+    if (status == UCC_OK) {
+        return status;
+    }
+
+    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
+
+        dpu_sync = &self->dpu_sync_list[rail];
+        dpu_connect = &ctx->dpu_ctx_list[rail];
 
         dpu_sync->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
         ucc_status = ucs_status_to_ucc_status(
@@ -311,6 +340,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
             dpu_connect->rem_ctrl_seg_key = dpu_sync->rem_ctrl_seg_key; 
         }
     }
+
 
     /* Make sure all the DPUs are done */
     self->status = UCC_OK;
@@ -433,12 +463,13 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
 {
     ucc_tl_dpu_team_t       *team = ucc_derived_of(tl_team, ucc_tl_dpu_team_t);
     ucc_tl_dpu_context_t    *ctx = UCC_TL_DPU_TEAM_CTX(team);
-    ucc_status_t            ucc_status = UCC_OK;
+    ucc_status_t            ucc_status = UCC_OK, status = UCC_OK;
     int                     tc_poll = UCC_TL_DPU_TC_POLL, i = 0, rail;
     size_t                  total_rkey_size;
     ucp_request_param_t     req_param = {0};
     ucc_tl_dpu_sync_t       *dpu_sync = NULL;
     ucc_tl_dpu_connect_t    *dpu_connect = NULL;
+    int initial_dpu_sync_status[MAX_DPU_COUNT] = {UCC_OPERATION_INITIALIZED};
 
     if (UCC_OK == team->status) {
         return UCC_OK;
@@ -450,6 +481,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
         dpu_connect = &ctx->dpu_ctx_list[rail];
 
         if (UCC_OK == dpu_sync->status) {
+            initial_dpu_sync_status[rail] = UCC_OK;
             continue;
         }
 
@@ -471,7 +503,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
             }
 
             if (UCC_INPROGRESS != dpu_sync->status) {
-                ucc_status = UCC_INPROGRESS;
+                status = UCC_INPROGRESS;
                 continue;
             }
 
@@ -512,10 +544,25 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
                 }
             }
             if (UCC_OK != dpu_sync->status) {
-                ucc_status = UCC_INPROGRESS;
+                status = UCC_INPROGRESS;
                 continue;
             }
         }
+    }
+
+    if (status == UCC_INPROGRESS) {
+        return status;
+    }
+
+    for (rail = 0; rail < team->dpu_per_node_cnt; rail++) {
+
+        if (initial_dpu_sync_status[rail] == UCC_OK) {
+            /* team create for this dpu is completed already */
+            continue;
+        }
+
+        dpu_sync = &team->dpu_sync_list[rail];
+        dpu_connect = &ctx->dpu_ctx_list[rail];
 
         if (UCC_INPROGRESS == dpu_sync->status) {
             for (i = 0; i < tc_poll; i++) {
@@ -528,10 +575,27 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
                 }
             }
             if (UCC_OK != dpu_sync->status) {
-                ucc_status = UCC_INPROGRESS;
+                status = UCC_INPROGRESS;
                 continue;
             }
         }
+    }
+
+    if (status == UCC_INPROGRESS) {
+        return status;
+    }
+
+    for (rail = 0; rail < team->dpu_per_node_cnt; rail++) {
+
+        if (initial_dpu_sync_status[rail] == UCC_OK) {
+            /* team create for this dpu is completed already */
+            continue;
+        }
+
+        dpu_sync = &team->dpu_sync_list[rail];
+        dpu_connect = &ctx->dpu_ctx_list[rail];
+
+        assert(dpu_sync->status == UCC_OK);
 
         dpu_sync->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
         ucc_status = ucs_status_to_ucc_status(
@@ -581,16 +645,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
         }
     }
 
-    /* Make sure all the DPUs are done */
     team->status = UCC_OK;
-    for (rail = 0; rail < team->dpu_per_node_cnt; rail++) {
-        if (team->dpu_sync_list[rail].status != UCC_OK) {
-            team->status = team->dpu_sync_list[rail].status;
-            if (team->dpu_sync_list[rail].status == UCC_OPERATION_INITIALIZED) {
-                break;
-            } 
-        }
-    }
 
     return team->status;
 err:
