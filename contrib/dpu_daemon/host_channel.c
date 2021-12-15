@@ -72,7 +72,7 @@ static int _dpu_listen(dpu_hc_t *hc)
         return UCC_ERR_NO_MESSAGE;
     }
 
-    hc->port = DEFAULT_PORT;
+    hc->port = DEFAULT_PORT + rail;
     /* TODO: if envar(port) - replace */
 
     /* creates an UN-named socket inside the kernel and returns
@@ -748,7 +748,7 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
             ucp_get_nbx(hc->host_eps[src_rank], dst_addr, data_size,
             (uint64_t)src_addr, hc->host_src_rkeys[src_rank], &hc->req_param);
     
-    stage->src_rank = (src_rank + 1) % hc->world_size; // FIXME team size
+    stage->src_rank = (src_rank + 1) % (hc->world_size / hc->dpu_per_node_cnt); // FIXME team size
     return UCS_OK;
 }
 
@@ -779,7 +779,7 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
             ucp_put_nbx(hc->host_eps[dst_rank], src_addr, data_size,
             (uint64_t)dst_addr, hc->host_dst_rkeys[dst_rank], &hc->req_param);
 
-    stage->dst_rank = (dst_rank + 1) % hc->world_size; // FIXME team size
+    stage->dst_rank = (dst_rank + 1) % (hc->world_size / hc->dpu_per_node_cnt); // FIXME team size
     return UCS_OK;
 }
 
@@ -835,7 +835,9 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
     ucc_status_t status;
     ucs_status_ptr_t request;
     dpu_pipeline_t *pp = &hc->pipeline;
-    int ranks = hc->world_size;
+    /* TODO change the ranks to represent the team size, also change the name
+     * */
+    int ranks = (hc->world_size / hc->dpu_per_node_cnt);
 
     for (i=0; i<10; i++) {
         if (ucp_worker_progress(hc->ucp_worker)) {

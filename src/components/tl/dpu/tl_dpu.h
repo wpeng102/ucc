@@ -103,6 +103,8 @@ typedef struct ucc_tl_dpu_rkeys_t {
 typedef struct ucc_tl_dpu_put_sync_t {
     ucc_tl_dpu_put_rkeys_t   rkeys;
     uint16_t                 team_id;
+    uint16_t                 rail;
+    uint16_t                 dpu_per_node_cnt;
     uint16_t                 create_new_team;
     ucc_datatype_t           dtype;
     ucc_reduction_op_t       op;

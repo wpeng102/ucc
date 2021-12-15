@@ -459,6 +459,8 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
         task_put_sync->count_total       = coll_args->src.info.count;
         task_put_sync->coll_type         = coll_args->coll_type;
         task_put_sync->team_id           = base_team->params.id;
+        task_put_sync->rail              = rail;
+        task_put_sync->dpu_per_node_cnt  = task->dpu_per_node_cnt;
         task_put_sync->create_new_team   = 0;
     }
 

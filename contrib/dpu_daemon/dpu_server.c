@@ -136,6 +136,9 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
         assert(NULL != hc->host_rkeys[i].dst_buf);
         CTX_LOG("Rank %d src buf %p dst buf %p\n", i, hc->host_rkeys[i].src_buf, hc->host_rkeys[i].dst_buf);
     }
+
+    hc->rail = lsync->rail;
+    hc->dpu_per_node_cnt = lsync->dpu_per_node_cnt;
 }
 
 static void dpu_coll_do_barrier(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
@@ -227,19 +230,26 @@ void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 
 void dpu_comm_worker(void *arg)
 {
-    thread_ctx_t *tctx_pool = (thread_ctx_t *)arg;
+    thread_ctx_t    *tctx_pool = (thread_ctx_t *)arg;
     /* There are nthreads + 1 (main thread) in total. The last 
      * thread context in the pool is the main thread and it is consider 
      * the communication thread */
-    int nthreads = tctx_pool[0].nthreads;
-    thread_ctx_t *comm_thread_ctx = &tctx_pool[nthreads];
-    thread_ctx_t *ctx = comm_thread_ctx;
-    dpu_hc_t *hc = ctx->hc;
+    int             nthreads = tctx_pool[0].nthreads;
+    thread_ctx_t    *comm_thread_ctx = &tctx_pool[nthreads];
+    thread_ctx_t    *ctx = comm_thread_ctx;
+    dpu_hc_t        *hc  = ctx->hc;
+    unsigned int    coll_id;     
+    ucc_coll_type_t coll_type; 
+    size_t          count_total; 
+    uint16_t        team_id; 
+    uint16_t        create_team;
+    uint16_t        rail; 
+    uint16_t        dpu_per_node_cnt;
 
-    dpu_put_sync_t *lsync = &tmp_sync; //comm_thread_ctx->hc->mem_segs.sync.base;
+    dpu_put_sync_t  *lsync = &tmp_sync; //comm_thread_ctx->hc->mem_segs.sync.base;
+    ucc_status_t    status;
     assert(comm_thread_ctx->idx == -1);
     dpu_thread_set_affinity(comm_thread_ctx);
-    ucc_status_t status;
     CTX_LOG("Started comm thread\n");
 
 
@@ -251,11 +261,14 @@ void dpu_comm_worker(void *arg)
         CTX_LOG("Waiting for coll id: %d from host\n", ctx->coll_sync.coll_id);
         dpu_wait_for_next_coll(comm_thread_ctx);
 
-        unsigned int    coll_id     = lsync->coll_id;
-        ucc_coll_type_t coll_type   = lsync->coll_type;
-        size_t          count_total = lsync->count_total;
-        uint16_t        team_id     = lsync->team_id;
-        uint16_t        create_team = lsync->create_new_team;
+        coll_id     = lsync->coll_id;
+        coll_type   = lsync->coll_type;
+        count_total = lsync->count_total;
+        team_id     = lsync->team_id;
+        create_team = lsync->create_new_team;
+        rail        = lsync->rail;
+        dpu_per_node_cnt = lsync->dpu_per_node_cnt;
+
         
         assert(0 <= team_id && team_id < DPU_TEAM_POOL_SIZE);
         CTX_LOG(

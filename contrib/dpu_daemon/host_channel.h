@@ -75,6 +75,8 @@ typedef struct host_rkey_t {
 typedef struct dpu_put_sync_t {
     host_rkey_t         rkeys;
     uint16_t            team_id;
+    uint16_t            rail;
+    uint16_t            dpu_per_node_cnt;
     uint16_t            create_new_team;
     ucc_datatype_t      dtype;
     ucc_reduction_op_t  op;
@@ -188,6 +190,9 @@ typedef struct dpu_hc_t {
     host_rkey_t *host_rkeys;
     ucp_rkey_h *host_src_rkeys;
     ucp_rkey_h *host_dst_rkeys;
+
+    int rail;
+    int dpu_per_node_cnt;
 } dpu_hc_t;
 
 int dpu_hc_init(dpu_hc_t *dpu_hc);
