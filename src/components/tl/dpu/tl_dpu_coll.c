@@ -190,6 +190,8 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     ucc_tl_dpu_init_put(ctx, task, team, rail);
     assert(put_req->sync_req == NULL);
 
+    assert(task->dpu_per_node_cnt > 0);
+    assert(dpu_task->put_sync.dpu_per_node_cnt > 0);
     ucp_worker_fence(ctx->dpu_ctx_list[rail].ucp_worker);
     put_req->sync_req =
         ucp_put_nbx(ctx->dpu_ctx_list[rail].ucp_ep, &dpu_task->put_sync,
@@ -198,6 +200,7 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     if (ucc_tl_dpu_req_check(team, put_req->sync_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
     }
+
     tl_info(UCC_TL_TEAM_LIB(task->team), "Sent task to DPU: %p, coll type %d id %d count %u",
             task, dpu_task->put_sync.coll_type, dpu_task->put_sync.coll_id,
             dpu_task->put_sync.count_total);
@@ -224,8 +227,8 @@ static ucc_status_t ucc_tl_dpu_check_progress(
                     task->dpu_task_list[rail].put_sync.coll_id ==
                     team->dpu_sync_list[rail].coll_id_completed + 1) {
                 tl_info(UCC_TL_TEAM_LIB(task->team), 
-                        "Put to DPU rail: %d coll task: %p, coll id %d", 
-                        rail, task, task->dpu_task_list[rail].put_sync.coll_id);
+                        "Put to DPU rail: %d coll task: %p, coll id %d, DPU count: %d", 
+                        rail, task, task->dpu_task_list[rail].put_sync.coll_id, task->dpu_per_node_cnt);
                 status = ucc_tl_dpu_issue_put(task, ctx, team, rail);
                 if (UCC_OK != status) {
                     return UCC_INPROGRESS;
@@ -369,14 +372,16 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
         task_put_sync->coll_type         = coll_args->coll_type;
         task_put_sync->team_id           = base_team->params.id;
         task_put_sync->create_new_team   = 0;
+        task_put_sync->dpu_per_node_cnt  = task->dpu_per_node_cnt;
+        task_put_sync->rail              = rail;
 
         assert(task->dpu_task_list[rail].status ==
                 UCC_TL_DPU_TASK_STATUS_INIT);
         if (task_put_sync->coll_id == ctx->dpu_ctx_list[rail].coll_id_completed
                 + 1) {
             tl_info(UCC_TL_TEAM_LIB(team), 
-                    "Put to DPU rail: %d coll task: %p, coll id %d",
-                    rail, task, task_put_sync->coll_id);
+                    "Put to DPU rail: %d coll task: %p, coll id %d, DPU count: %d ",
+                    rail, task, task_put_sync->coll_id, task->dpu_per_node_cnt);
             ucc_tl_dpu_issue_put(task, ctx, team, rail);
         }
     }
@@ -449,6 +454,8 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
 
     ucc_tl_dpu_init_rkeys(task);
 
+    assert(task->dpu_per_node_cnt > 0);
+
     /* Set sync information for DPU */
     for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
 
@@ -460,8 +467,9 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
         task_put_sync->coll_type         = coll_args->coll_type;
         task_put_sync->team_id           = base_team->params.id;
         task_put_sync->rail              = rail;
-        task_put_sync->dpu_per_node_cnt  = task->dpu_per_node_cnt;
         task_put_sync->create_new_team   = 0;
+        task_put_sync->dpu_per_node_cnt  = task->dpu_per_node_cnt;
+        task_put_sync->rail              = rail;
     }
 
 
@@ -509,6 +517,8 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
     tl_info(team->context->lib, "task %p initialized", task);
 
     memcpy(&task->args, &coll_args->args, sizeof(ucc_coll_args_t));
+
+    assert(ctx->dpu_per_node_cnt > 0);
 
     /* Misc init stuff */
     task->team                       = tl_team;

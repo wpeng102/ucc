@@ -139,6 +139,7 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
 
     hc->rail = lsync->rail;
     hc->dpu_per_node_cnt = lsync->dpu_per_node_cnt;
+    assert(hc->dpu_per_node_cnt > 0 && hc->rail >= 0 && hc->rail < hc->dpu_per_node_cnt);
 }
 
 static void dpu_coll_do_barrier(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
@@ -271,9 +272,11 @@ void dpu_comm_worker(void *arg)
 
         
         assert(0 <= team_id && team_id < DPU_TEAM_POOL_SIZE);
+
         CTX_LOG(
-            "Start coll id: %u, type: %d, count total: %lu on team: %u\n",
-            coll_id, coll_type, count_total, team_id);
+            "Start coll id: %u, type: %d, count total: %lu on team: %u "
+            "rail: %d, dpu count: %d\n",
+            coll_id, coll_type, count_total, team_id, rail, dpu_per_node_cnt);
 
 
         if (coll_type == UCC_COLL_TYPE_LAST) {
