@@ -144,9 +144,6 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
 
 static void dpu_coll_do_barrier(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
-    /* Only do in comm thread */
-    assert(ctx->idx == -1);
-
     ucs_status_t status;
     ucc_coll_req_h request;
     ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
@@ -543,8 +540,6 @@ void *dpu_worker(void *arg)
 
 int main(int argc, char **argv)
 {
-//     fprintf (stderr, "%s\n", __FUNCTION__);
-//     sleep(20);
     int              nthreads = 0;
     int              i = 0;
     thread_ctx_t     *tctx_pool = NULL;
