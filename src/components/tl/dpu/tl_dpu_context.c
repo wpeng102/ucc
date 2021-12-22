@@ -172,8 +172,9 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
         tl_info(self->super.super.lib, "Connecting to %s", dpu);
 
-        sockfd = _server_connect(self, dpu, tl_dpu_config->server_port);
+        sockfd = _server_connect(self, dpu, tl_dpu_config->server_port  /*temp code: */ + rail);
 
+        memset(&ucp_context, 0, sizeof(ucp_context_h));
         ucc_status = ucs_status_to_ucc_status(
                         ucp_init(&ucp_params, NULL, &ucp_context));
         if (ucc_status != UCC_OK) {
@@ -182,6 +183,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
             goto err;
         }
 
+        memset(&ucp_worker, 0, sizeof(ucp_worker_h));
         ucc_status = ucs_status_to_ucc_status(
                         ucp_worker_create(ucp_context, &worker_params, &ucp_worker));
         if (ucc_status != UCC_OK) {
@@ -237,6 +239,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
             goto err;
         }
 
+        memset(&ucp_ep, 0, sizeof(ucp_ep_h));
         ucc_status = ucs_status_to_ucc_status(
                         ucp_ep_create(ucp_worker, &ep_params, &ucp_ep));
         free(worker_attr.address);
