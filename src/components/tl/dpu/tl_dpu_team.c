@@ -4,6 +4,7 @@
  * See file LICENSE for terms.
  */
 
+#include <assert.h>
 #include "tl_dpu.h"
 #include "../../../core/ucc_team.h"
 #include "tl_dpu_coll.h"
