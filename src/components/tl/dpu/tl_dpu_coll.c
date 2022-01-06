@@ -152,7 +152,7 @@ static void ucc_tl_dpu_finalize_rkeys(ucc_tl_dpu_task_t *task)
     int rail;
     ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(task->team);
 
-    for (rail = 0; rail < ctx->dpu_per_node_cnt; rail++) { 
+    for (rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
         ucc_tl_dpu_deregister_buf(ctx->dpu_ctx_list[rail].ucp_context,
                 &task->dpu_task_list[rail].src_rkey);
         ucc_tl_dpu_deregister_buf(ctx->dpu_ctx_list[rail].ucp_context,
@@ -245,8 +245,8 @@ static ucc_status_t ucc_tl_dpu_check_progress(
         }
     }
 
-    for (i = 0; i < UCC_TL_DPU_TC_POLL; i++) {
-        for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
+    for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
+        for (i = 0; i < UCC_TL_DPU_TC_POLL; i++) {
             if (ucp_worker_progress(ctx->dpu_ctx_list[rail].ucp_worker)) {
                 break;
             }
@@ -281,9 +281,13 @@ static ucc_status_t ucc_tl_dpu_check_progress(
 
         for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
             if (task->dpu_task_list[rail].status == UCC_TL_DPU_TASK_STATUS_DONE) {
+                tl_info(UCC_TL_TEAM_LIB(task->team), "Allreduce task %p coll "
+                        "id %d is marked DONE for rail: %d\n", task,
+                        task->dpu_task_list[rail].put_sync.coll_id, rail);
                 rail_progressed_cnt++;
             }
         }
+
         if (rail_progressed_cnt == task->dpu_per_node_cnt) {
             task->status = UCC_TL_DPU_TASK_STATUS_DONE;
             return UCC_OK;
@@ -492,7 +496,7 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
         return UCC_OK;
     }
 
-    //assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
+    assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
     //assert(task->get_sync.coll_id == task->put_sync.coll_id);
     //assert(task->get_sync.count_serviced == task->put_sync.count_total);
     ucc_tl_dpu_finalize_rkeys(task);

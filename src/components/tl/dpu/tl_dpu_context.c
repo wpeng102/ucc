@@ -172,7 +172,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
         tl_info(self->super.super.lib, "Connecting to %s", dpu);
 
-        sockfd = _server_connect(self, dpu, tl_dpu_config->server_port  /*temp code: */ + rail);
+        sockfd = _server_connect(self, dpu, tl_dpu_config->server_port);
 
         memset(&ucp_context, 0, sizeof(ucp_context_h));
         ucc_status = ucs_status_to_ucc_status(

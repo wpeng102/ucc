@@ -64,7 +64,7 @@ static int _dpu_host_to_ip(dpu_hc_t *hc)
     return UCC_ERR_NO_MESSAGE;
 }
 
-static int _dpu_listen(dpu_hc_t *hc, int local_rank)
+static int _dpu_listen(dpu_hc_t *hc)
 {
     struct sockaddr_in serv_addr;
 
@@ -72,7 +72,7 @@ static int _dpu_listen(dpu_hc_t *hc, int local_rank)
         return UCC_ERR_NO_MESSAGE;
     }
 
-    hc->port = DEFAULT_PORT + local_rank;
+    hc->port = DEFAULT_PORT;
     /* TODO: if envar(port) - replace */
 
     /* creates an UN-named socket inside the kernel and returns
@@ -367,17 +367,8 @@ int dpu_hc_init(dpu_hc_t *hc)
     MPI_Comm_rank(MPI_COMM_WORLD, &hc->world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &hc->world_size);
 
-    /* temp code: find shmem rank
-     * */
-    MPI_Comm shmcomm;
-    MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0,
-                        MPI_INFO_NULL, &shmcomm);
-    int shmrank;
-    MPI_Comm_rank(shmcomm, &shmrank);
-    /* end of temp code */
-
     /* Start listening */
-    ret = _dpu_listen(hc, shmrank);
+    ret = _dpu_listen(hc);
     if (ret) {
         goto out;
     }
@@ -928,7 +919,6 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
 
                     if (stage->done_red == ranks-1) {
                         /* Start broadcast */
-                        sleep(30);
                         stage->phase = BCAST;
                         pp->count_reduced += accbuf->count;
                     }
