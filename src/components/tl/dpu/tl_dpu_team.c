@@ -534,19 +534,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
                 goto err;
             }
 
-            for (i = 0; i < tc_poll; i++) {
-                ucp_worker_progress(dpu_connect->ucp_worker);
-                if ((ucc_tl_dpu_req_test(&dpu_sync->recv_req[0], dpu_connect->ucp_worker) == UCC_OK) &&
-                    (ucc_tl_dpu_req_test(&dpu_sync->recv_req[1], dpu_connect->ucp_worker) == UCC_OK))
-                {
-                    dpu_sync->status = UCC_OK;
-                    break;
-                }
-            }
-            if (UCC_OK != dpu_sync->status) {
-                status = UCC_INPROGRESS;
-                continue;
-            }
+
         } else {
             assert(dpu_sync->status == UCC_INPROGRESS);
             assert(dpu_sync->conn_buf->rem_rkeys != NULL);
@@ -574,6 +562,54 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
                     (ucc_tl_dpu_req_test(&dpu_sync->recv_req[1], dpu_connect->ucp_worker) == UCC_OK))
                 {
                     dpu_sync->status = UCC_OK;
+
+                    dpu_sync->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
+                    ucc_status = ucs_status_to_ucc_status(
+                        ucp_ep_rkey_unpack(dpu_connect->ucp_ep, dpu_sync->conn_buf->rem_rkeys,
+                                            &dpu_sync->rem_ctrl_seg_key));
+                    if (UCC_OK != ucc_status) {
+                        goto err;
+                    }
+                    dpu_sync->rem_data_in[0] = dpu_sync->conn_buf->rem_addresses[1];
+
+                    ucc_status = ucs_status_to_ucc_status(
+                        ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
+                                    (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
+                                    dpu_sync->conn_buf->rem_rkeys_lengths[0]),
+                                    &dpu_sync->rem_data_in_key));
+                    if (UCC_OK != ucc_status) {
+                        goto err;
+                    }
+                    dpu_sync->rem_data_out[0] = dpu_sync->conn_buf->rem_addresses[2];
+
+                    ucc_status = ucs_status_to_ucc_status(
+                        ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
+                                            (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
+                                            dpu_sync->conn_buf->rem_rkeys_lengths[1] +
+                                            dpu_sync->conn_buf->rem_rkeys_lengths[0]),
+                                       &dpu_sync->rem_data_out_key));
+                    if (UCC_OK != ucc_status) {
+                        goto err;
+                    }
+
+                    ucc_free(dpu_sync->conn_buf->rem_rkeys);
+                    dpu_sync->conn_buf->rem_rkeys = NULL;
+                    ucc_free(dpu_sync->conn_buf);
+
+                    for (i=0; i<3; i++) {
+                        if (dpu_sync->send_req[i]) {
+                            ucp_request_free(dpu_sync->send_req[i]);
+                        }
+                        if (dpu_sync->recv_req[i]) {
+                            //ucp_request_free(dpu_sync->recv_req[i]);
+                        }
+                    }
+
+                    if (dpu_sync->status == UCC_OK) {
+                        dpu_connect->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
+                        dpu_connect->rem_ctrl_seg_key = dpu_sync->rem_ctrl_seg_key; 
+                    }
+
                     break;
                 }
             }
@@ -586,66 +622,6 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
 
     if (status == UCC_INPROGRESS) {
         return status;
-    }
-
-    for (rail = 0; rail < team->dpu_per_node_cnt; rail++) {
-
-        if (initial_dpu_sync_status[rail] == UCC_OK) {
-            /* team create for this dpu is completed already */
-            continue;
-        }
-
-        dpu_sync = &team->dpu_sync_list[rail];
-        dpu_connect = &ctx->dpu_ctx_list[rail];
-
-        assert(dpu_sync->status == UCC_OK);
-
-        dpu_sync->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
-        ucc_status = ucs_status_to_ucc_status(
-            ucp_ep_rkey_unpack(dpu_connect->ucp_ep, dpu_sync->conn_buf->rem_rkeys,
-                                &dpu_sync->rem_ctrl_seg_key));
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-        dpu_sync->rem_data_in[0] = dpu_sync->conn_buf->rem_addresses[1];
-
-        ucc_status = ucs_status_to_ucc_status(
-            ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
-                        (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
-                        dpu_sync->conn_buf->rem_rkeys_lengths[0]),
-                        &dpu_sync->rem_data_in_key));
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-        dpu_sync->rem_data_out[0] = dpu_sync->conn_buf->rem_addresses[2];
-
-        ucc_status = ucs_status_to_ucc_status(
-            ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
-                                (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
-                                dpu_sync->conn_buf->rem_rkeys_lengths[1] +
-                                dpu_sync->conn_buf->rem_rkeys_lengths[0]),
-                           &dpu_sync->rem_data_out_key));
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-
-        ucc_free(dpu_sync->conn_buf->rem_rkeys);
-        dpu_sync->conn_buf->rem_rkeys = NULL;
-        ucc_free(dpu_sync->conn_buf);
-
-        for (i=0; i<3; i++) {
-            if (dpu_sync->send_req[i]) {
-                ucp_request_free(dpu_sync->send_req[i]);
-            }
-            if (dpu_sync->recv_req[i]) {
-                //ucp_request_free(dpu_sync->recv_req[i]);
-            }
-        }
-
-        if (dpu_sync->status == UCC_OK) {
-            dpu_connect->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
-            dpu_connect->rem_ctrl_seg_key = dpu_sync->rem_ctrl_seg_key; 
-        }
     }
 
     /* Make sure all the DPUs are done */
@@ -672,6 +648,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
             assert(dpu_sync->rem_data_out_key != 0);
             assert(dpu_connect->rem_ctrl_seg != 0);
             assert(dpu_connect->rem_ctrl_seg_key != 0);
+
         }
     }
 
