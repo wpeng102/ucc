@@ -185,8 +185,8 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     ucp_request_param_t req_param = {0};
     ucc_tl_dpu_sub_task_t *dpu_task = &task->dpu_task_list[rail];
 
-    assert(task->dpu_task_list[rail].status != UCC_TL_DPU_TASK_STATUS_POSTED);
-    task->dpu_task_list[rail].status = UCC_TL_DPU_TASK_STATUS_POSTED;
+    assert(dpu_task->status != UCC_TL_DPU_TASK_STATUS_POSTED);
+    dpu_task->status = UCC_TL_DPU_TASK_STATUS_POSTED;
     ucc_tl_dpu_init_put(ctx, task, team, rail);
     assert(put_req->sync_req == NULL);
 
@@ -256,15 +256,19 @@ static ucc_status_t ucc_tl_dpu_check_progress(
     }
 
     if (task->status == UCC_TL_DPU_TASK_STATUS_POSTED) {
+
         for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
             sub_task = &task->dpu_task_list[rail];
             ucc_tl_dpu_connect_t *dpu_connect = &ctx->dpu_ctx_list[rail];
 
-            if (dpu_connect->get_sync.coll_id < sub_task->put_sync.coll_id ||
-                    dpu_connect->get_sync.count_serviced < sub_task->put_sync.count_total) {
-                return UCC_INPROGRESS;
-            }
-            else if (sub_task->status != UCC_TL_DPU_TASK_STATUS_DONE) {
+            if (sub_task->status != UCC_TL_DPU_TASK_STATUS_DONE) {
+
+                 if (dpu_connect->get_sync.coll_id < sub_task->put_sync.coll_id
+                        || dpu_connect->get_sync.count_serviced <
+                        sub_task->put_sync.count_total) {
+                    return UCC_INPROGRESS;
+                 }
+
                  sub_task->get_sync.coll_id = dpu_connect->get_sync.coll_id;
                  dpu_connect->get_sync.count_serviced = dpu_connect->get_sync.count_serviced;
                  dpu_connect->get_sync.coll_id        = 0;
