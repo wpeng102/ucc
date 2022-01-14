@@ -33,9 +33,7 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team)
 
     team_mirroring_signal.create_new_team      = 1;
     team_mirroring_signal.coll_id              = ctx->coll_id_issued;
-    team_mirroring_signal.coll_type            = UCC_COLL_TYPE_LAST;
-    team_mirroring_signal.dtype                = UCC_DT_USERDEFINED;
-    team_mirroring_signal.op                   = UCC_OP_USERDEFINED;
+    team_mirroring_signal.coll_args.coll_type  = UCC_COLL_TYPE_LAST;
     team_mirroring_signal.team_id              = ucc_team->id;
 
     /* register the rank list in world with hca and give its rdma
@@ -324,13 +322,11 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
      * dpu world (if it is releasing a subcomm's team) or ask dpu to 
      * finalize (if it is releasing comm world'd team) */
 
-    hangup.coll_id      = ++ctx->coll_id_issued;
-    team->coll_id_issued = ctx->coll_id_issued;
-    hangup.coll_type    = UCC_COLL_TYPE_LAST;
-    hangup.dtype        = UCC_DT_USERDEFINED;
-    hangup.op           = UCC_OP_USERDEFINED;
-    hangup.team_id      = team_id;
-    hangup.create_new_team = 0;
+    hangup.coll_id              = ++ctx->coll_id_issued;
+    team->coll_id_issued        = ctx->coll_id_issued;
+    hangup.coll_args.coll_type  = UCC_COLL_TYPE_LAST;
+    hangup.team_id              = team_id;
+    hangup.create_new_team      = 0;
  
     tl_info(ctx->super.super.lib, "sending hangup/team_free to dpu team, coll id = %u", hangup.coll_id);
     hangup_req = ucp_put_nbx(ctx->ucp_ep, &hangup, sizeof(hangup),

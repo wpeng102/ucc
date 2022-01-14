@@ -724,7 +724,8 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     assert(getbuf->state == FREE && getbuf->ucp_req == NULL);
     getbuf->state = SENDRECV;
 
-    size_t dt_size = dpu_ucc_dt_size(sync->dtype);
+    ucc_datatype_t dtype = sync->coll_args.src.info.datatype;
+    size_t dt_size = dpu_ucc_dt_size(dtype);
     size_t remaining_elems = hc->pipeline.my_count - hc->pipeline.count_received;
     size_t count = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
     size_t get_offset = hc->pipeline.my_offset + hc->pipeline.count_received * dt_size;
@@ -757,7 +758,8 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     assert(accbuf->state == IDLE && accbuf->ucp_req == NULL);
     accbuf->state = SENDRECV;
 
-    size_t dt_size = dpu_ucc_dt_size(sync->dtype);
+    ucc_datatype_t dtype = sync->coll_args.src.info.datatype;
+    size_t dt_size = dpu_ucc_dt_size(dtype);
     size_t count = accbuf->count;
     size_t put_offset = hc->pipeline.my_offset + hc->pipeline.count_serviced * dt_size;
     int dst_rank = stage->dst_rank;

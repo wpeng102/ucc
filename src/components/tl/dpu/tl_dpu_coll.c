@@ -182,7 +182,7 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
         return UCC_ERR_NO_MESSAGE;
     }
     tl_info(UCC_TL_TEAM_LIB(task->team), "Sent task to DPU: %p, coll type %d id %d count %u",
-            task, task->put_sync.coll_type, task->put_sync.coll_id, task->put_sync.count_total);
+            task, task->put_sync.coll_args.coll_type, task->put_sync.coll_id, task->put_sync.count_total);
  
     ucc_tl_dpu_req_wait(ctx->ucp_worker, put_req->sync_req);
     put_req->sync_req = NULL;
@@ -273,31 +273,28 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
     ucc_base_team_t      *base_team = &team->super.super;
     ucc_tl_dpu_context_t *ctx       = UCC_TL_DPU_TEAM_CTX(task->team);
 
-    if (task->args.mask & UCC_COLL_ARGS_FIELD_USERDEFINED_REDUCTIONS) {
+    if (coll_args->mask & UCC_COLL_ARGS_FIELD_USERDEFINED_REDUCTIONS) {
         tl_error(UCC_TL_TEAM_LIB(task->team),
                  "userdefined reductions are not supported yet");
         return UCC_ERR_NOT_SUPPORTED;
     }
-    if (!UCC_IS_INPLACE(task->args) && (task->args.src.info.mem_type !=
-                                        task->args.dst.info.mem_type)) {
+    if (!UCC_IS_INPLACE(*coll_args) && (coll_args->src.info.mem_type !=
+                                        coll_args->dst.info.mem_type)) {
         tl_error(UCC_TL_TEAM_LIB(task->team),
                  "assymetric src/dst memory types are not supported yet");
         return UCC_ERR_NOT_SUPPORTED;
     }
 
-    if (UCC_IS_INPLACE(task->args)) {
-        task->args.src.info.buffer   = task->args.dst.info.buffer;
-        task->args.dst.info.count    = task->args.src.info.count;
-        task->args.dst.info.datatype = task->args.src.info.datatype;
-        task->args.dst.info.mem_type = task->args.src.info.mem_type;
+    if (UCC_IS_INPLACE(*coll_args)) {
+        coll_args->src.info.buffer   = coll_args->dst.info.buffer;
+        coll_args->dst.info.count    = coll_args->src.info.count;
+        coll_args->dst.info.datatype = coll_args->src.info.datatype;
+        coll_args->dst.info.mem_type = coll_args->src.info.mem_type;
     }
 
     /* Set sync information for DPU */
-    task->put_sync.coll_id           = team->coll_id_issued;
-    task->put_sync.dtype             = coll_args->src.info.datatype;
     task->put_sync.count_total       = coll_args->src.info.count;
-    task->put_sync.op                = coll_args->reduce.predefined_op;
-    task->put_sync.coll_type         = coll_args->coll_type;
+    task->put_sync.coll_id           = team->coll_id_issued;
     task->put_sync.team_id           = base_team->params.id;
     task->put_sync.create_new_team   = 0;
 
@@ -361,15 +358,13 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
         return UCC_ERR_NOT_SUPPORTED;
     }
 
-    if (UCC_IS_INPLACE(task->args)) {
-        task->args.src.info.buffer = task->args.dst.info.buffer;
+    if (UCC_IS_INPLACE(*coll_args)) {
+        coll_args->src.info.buffer = coll_args->dst.info.buffer;
     }
 
     /* Set sync information for DPU */
-    task->put_sync.coll_id           = team->coll_id_issued;
-    task->put_sync.dtype             = coll_args->src.info.datatype;
     task->put_sync.count_total       = coll_args->src.info.count;
-    task->put_sync.coll_type         = coll_args->coll_type;
+    task->put_sync.coll_id           = team->coll_id_issued;
     task->put_sync.team_id           = base_team->params.id;
     task->put_sync.create_new_team   = 0;
 
@@ -377,6 +372,66 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
 
     task->super.post     = ucc_tl_dpu_alltoall_start;
     task->super.progress = ucc_tl_dpu_alltoall_progress;
+
+    return UCC_OK;
+}
+
+ucc_status_t ucc_tl_dpu_alltoallv_progress(ucc_coll_task_t *coll_task)
+{
+    ucc_tl_dpu_task_t       *task =
+        ucc_derived_of(coll_task, ucc_tl_dpu_task_t);
+    ucc_tl_dpu_context_t *ctx     = UCC_TL_DPU_TEAM_CTX(task->team);
+    ucc_status_t            status;
+
+    status = ucc_tl_dpu_check_progress(task, ctx);
+    coll_task->super.status = status;
+
+    return status;
+}
+
+ucc_status_t ucc_tl_dpu_alltoallv_start(ucc_coll_task_t *coll_task)
+{
+    ucc_tl_dpu_task_t    *task        = ucs_derived_of(coll_task, ucc_tl_dpu_task_t);
+    ucc_tl_dpu_team_t    *team        = task->team;
+    ucc_status_t         status;
+ 
+    tl_info(UCC_TL_TEAM_LIB(task->team), "Alltoall start task %p coll id %d", task, task->put_sync.coll_id);
+
+    status = ucc_tl_dpu_alltoallv_progress(coll_task);
+    if (UCC_INPROGRESS == status) {
+        ucc_progress_enqueue(UCC_TL_DPU_TEAM_CORE_CTX(team)->pq, coll_task);
+        return UCC_OK;
+    }
+
+    return ucc_task_complete(coll_task);
+}
+
+ucc_status_t ucc_tl_dpu_alltoallv_init(ucc_tl_dpu_task_t *task)
+{
+    ucc_coll_args_t     *coll_args = &task->args;
+    ucc_tl_dpu_team_t   *team      = task->team;
+    ucc_base_team_t     *base_team = &team->super.super;
+
+    if (!UCC_IS_INPLACE(*coll_args) && (coll_args->src.info.mem_type !=
+                                        coll_args->dst.info.mem_type)) {
+        tl_error(UCC_TL_TEAM_LIB(task->team),
+                 "assymetric src/dst memory types are not supported yet");
+        return UCC_ERR_NOT_SUPPORTED;
+    }
+
+    if (UCC_IS_INPLACE(*coll_args)) {
+        coll_args->src.info.buffer = coll_args->dst.info.buffer;
+    }
+
+    /* Set sync information for DPU */
+    task->put_sync.coll_id           = team->coll_id_issued;
+    task->put_sync.team_id           = base_team->params.id;
+    task->put_sync.create_new_team   = 0;
+
+    ucc_tl_dpu_init_rkeys(task);
+
+    task->super.post     = ucc_tl_dpu_alltoallv_start;
+    task->super.progress = ucc_tl_dpu_alltoallv_progress;
 
     return UCC_OK;
 }
@@ -418,6 +473,7 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
     tl_info(team->context->lib, "task %p initialized", task);
 
     memcpy(&task->args, &coll_args->args, sizeof(ucc_coll_args_t));
+    memcpy(&task->put_sync.coll_args, &coll_args->args, sizeof(ucc_coll_args_t));
 
     /* Misc init stuff */
     task->team                       = tl_team;
@@ -435,6 +491,9 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
         break;
     case UCC_COLL_TYPE_ALLTOALL:
         status = ucc_tl_dpu_alltoall_init(task);
+        break;
+    case UCC_COLL_TYPE_ALLTOALLV:
+        status = ucc_tl_dpu_alltoallv_init(task);
         break;
     default:
         status = UCC_ERR_NOT_SUPPORTED;

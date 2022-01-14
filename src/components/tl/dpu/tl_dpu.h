@@ -98,9 +98,7 @@ typedef struct ucc_tl_dpu_put_sync_t {
     ucc_tl_dpu_put_rkeys_t   rkeys;
     uint16_t                 team_id;
     uint16_t                 create_new_team;
-    ucc_datatype_t           dtype;
-    ucc_reduction_op_t       op;
-    ucc_coll_type_t          coll_type;
+    ucc_coll_args_t          coll_args;
     uint32_t                 count_total;
     uint32_t                 coll_id;
 } ucc_tl_dpu_put_sync_t;

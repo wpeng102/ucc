@@ -76,9 +76,7 @@ typedef struct dpu_put_sync_t {
     host_rkey_t         rkeys;
     uint16_t            team_id;
     uint16_t            create_new_team;
-    ucc_datatype_t      dtype;
-    ucc_reduction_op_t  op;
-    ucc_coll_type_t     coll_type;
+    ucc_coll_args_t     coll_args;
     volatile uint32_t   count_total;
     volatile uint32_t   coll_id;
 } dpu_put_sync_t;
