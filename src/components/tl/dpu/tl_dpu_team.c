@@ -516,7 +516,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
                               dpu_sync->conn_buf->rem_rkeys_lengths[2];
             dpu_sync->conn_buf->rem_rkeys = ucc_malloc(total_rkey_size, "rem_rkeys alloc");
 
-            dpu_sync->recv_req[0] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+            dpu_sync->recv_req[1] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
                                 &dpu_sync->conn_buf->rem_addresses,
                                 sizeof(dpu_sync->conn_buf->rem_addresses),
                                 UCC_TL_DPU_EXCHANGE_ADDR_TAG, (uint64_t)-1,
@@ -525,7 +525,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
                 goto err;
             }
 
-            dpu_sync->recv_req[1] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+            dpu_sync->recv_req[2] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
                                 dpu_sync->conn_buf->rem_rkeys,
                                 total_rkey_size,
                                 UCC_TL_DPU_EXCHANGE_RKEY_TAG, (uint64_t)-1,
@@ -558,8 +558,8 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
         if (UCC_INPROGRESS == dpu_sync->status) {
             for (i = 0; i < tc_poll; i++) {
                 ucp_worker_progress(dpu_connect->ucp_worker);
-                if ((ucc_tl_dpu_req_test(&dpu_sync->recv_req[0], dpu_connect->ucp_worker) == UCC_OK) &&
-                    (ucc_tl_dpu_req_test(&dpu_sync->recv_req[1], dpu_connect->ucp_worker) == UCC_OK))
+                if ((ucc_tl_dpu_req_test(&dpu_sync->recv_req[1], dpu_connect->ucp_worker) == UCC_OK) &&
+                    (ucc_tl_dpu_req_test(&dpu_sync->recv_req[2], dpu_connect->ucp_worker) == UCC_OK))
                 {
                     dpu_sync->status = UCC_OK;
 
@@ -601,7 +601,7 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
                             ucp_request_free(dpu_sync->send_req[i]);
                         }
                         if (dpu_sync->recv_req[i]) {
-                            //ucp_request_free(dpu_sync->recv_req[i]);
+                            ucp_request_free(dpu_sync->recv_req[i]);
                         }
                     }
 
