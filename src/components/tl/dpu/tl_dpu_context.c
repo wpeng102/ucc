@@ -81,13 +81,15 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     ucp_ep_h            ucp_ep;
     ucp_context_h       ucp_context;
     ucp_worker_h        ucp_worker;
-    int i, ret, rail, dpu_count = 0;
+    int i, ret, rail = 0, dpu_count = 0, hca = 0;
 
     /* Identify DPU */
     char hname[MAX_DPU_HOST_NAME];
     void *rem_worker_addr;
     size_t rem_worker_addr_size; 
     char dpu_hnames[MAX_DPU_COUNT][MAX_DPU_HOST_NAME];
+    char dpu_hcanames[MAX_DPU_COUNT][MAX_DPU_HCA_NAME];
+    char dpu_tmp[MAX_DPU_HOST_NAME];
 
     UCC_CLASS_CALL_SUPER_INIT(ucc_tl_context_t, tl_dpu_config->super.tl_lib,
                               params->context);
@@ -107,28 +109,47 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
             ucc_status = UCC_ERR_NO_MESSAGE;
         }
         else {
+            rail = 0, hca = 0;
             while (fscanf(fp,"%s", h) != EOF) {
                 if (strcmp(h, hname) == 0) {
-                    for (rail = 0; rail < MAX_DPU_COUNT; rail++) {
-                        dpu = *(dpu_hnames + rail);
-                        memset(dpu, 0, MAX_DPU_HOST_NAME);
-                        fscanf(fp, "%s", dpu); 
-                        if(strchr(dpu, ',') != NULL)
+                    for (i = 0; i < 2 * MAX_DPU_COUNT; i++) {
+                        memset(dpu_tmp, 0, MAX_DPU_HOST_NAME);
+                        fscanf(fp, "%s", dpu_tmp);
+
+                        if(strchr(dpu_tmp, ',') != NULL)
                         {
                             last_dpu_found = 1;
                             /* remove the tail (,) */
-                            memmove(&dpu[strlen(dpu) - 1], &dpu[strlen(dpu)], 1);
+                            memmove(&dpu_tmp[strlen(dpu_tmp) - 1], &dpu_tmp[strlen(dpu_tmp)], 1);
                         }
+
+                        if(strstr(dpu_tmp, "mlx5_") != NULL) {
+                            memcpy(dpu_hcanames[hca], dpu_tmp, MAX_DPU_HCA_NAME);
+                            hca++;
+                            if(last_dpu_found) { 
+                                break;
+                            }
+                            continue;
+                        } 
+
+                        memcpy(dpu_hnames[rail], dpu_tmp, MAX_DPU_HOST_NAME);
+                        rail++;                        
+
                         tl_info(self->super.super.lib, "DPU <%s> found!\n",
-                                dpu);
-                        dpu_count++;
+                                dpu_tmp);
+
                         if(last_dpu_found) { 
                             break;
                         }
                     }
                 }
-                memset(h, 0, 256);
+                memset(h, 0, MAX_DPU_HOST_NAME);
             }
+            if (rail != hca) {
+                fprintf(stderr, "host_to_dpu.list file is not formatted correctly");
+                goto err;
+            }
+            dpu_count = rail;
         }
         if (!dpu_count) {
             ucc_status = UCC_ERR_NO_MESSAGE;
@@ -170,13 +191,16 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     for (rail = 0; rail < dpu_count; rail++) {
         dpu = *(dpu_hnames + rail);
 
-        tl_info(self->super.super.lib, "Connecting to %s", dpu);
+        tl_info(self->super.super.lib, "Connecting to %s with hca id %s", dpu, dpu_hcanames[rail]);
 
         sockfd = _server_connect(self, dpu, tl_dpu_config->server_port);
 
         memset(&ucp_context, 0, sizeof(ucp_context_h));
+        ucp_config_t *ucp_config;
+        ucp_config_read(NULL, NULL, &ucp_config);
+        ucp_config_modify(ucp_config, "NET_DEVICES", dpu_hcanames[rail]);
         ucc_status = ucs_status_to_ucc_status(
-                        ucp_init(&ucp_params, NULL, &ucp_context));
+                        ucp_init(&ucp_params, ucp_config, &ucp_context));
         if (ucc_status != UCC_OK) {
             tl_error(self->super.super.lib,
                 "failed ucp_init(%s)\n", ucc_status_string(ucc_status));
