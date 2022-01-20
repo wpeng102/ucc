@@ -419,6 +419,7 @@ ucc_status_t ucc_tl_dpu_alltoallv_init(ucc_tl_dpu_task_t *task)
         return UCC_ERR_NOT_SUPPORTED;
     }
 
+    /* TODO: is in_place supported? */
     if (UCC_IS_INPLACE(*coll_args)) {
         coll_args->src.info.buffer = coll_args->dst.info.buffer;
     }
@@ -427,6 +428,11 @@ ucc_status_t ucc_tl_dpu_alltoallv_init(ucc_tl_dpu_task_t *task)
     task->put_sync.coll_id           = team->coll_id_issued;
     task->put_sync.team_id           = base_team->params.id;
     task->put_sync.create_new_team   = 0;
+
+    memcpy(task->put_sync.src_v.counts, coll_args->src.info_v.counts, team->size * sizeof(ucc_count_t));
+    memcpy(task->put_sync.src_v.displs, coll_args->src.info_v.displacements, team->size * sizeof(ucc_count_t));
+    memcpy(task->put_sync.dst_v.counts, coll_args->dst.info_v.counts, team->size * sizeof(ucc_count_t));
+    memcpy(task->put_sync.dst_v.displs, coll_args->dst.info_v.displacements, team->size * sizeof(ucc_count_t));
 
     ucc_tl_dpu_init_rkeys(task);
 
@@ -480,6 +486,7 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
     task->super.finalize             = ucc_tl_dpu_coll_finalize;
     task->super.triggered_post       = NULL;
     task->status                     = UCC_TL_DPU_TASK_STATUS_INIT;
+    task->put_sync.count_total       = 0;
     
     //tl_team->coll_id_issued++;
     ctx->coll_id_issued++;

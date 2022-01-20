@@ -26,6 +26,7 @@
 
 #define MAX_DPU_HOST_NAME 256
 #define MAX_RKEY_LEN      1024
+#define MAX_NUM_RANKS     128
 
 typedef enum {
     UCC_TL_DPU_TASK_STATUS_INIT,
@@ -94,11 +95,18 @@ typedef struct ucc_tl_dpu_rkeys_t {
     void *rank_list;
 } ucc_tl_dpu_put_rkeys_t;
 
+typedef struct buf_info_v_t {
+    ucc_count_t counts[MAX_NUM_RANKS];
+    ucc_count_t displs[MAX_NUM_RANKS];
+} buf_info_v_t;
+
 typedef struct ucc_tl_dpu_put_sync_t {
     ucc_tl_dpu_put_rkeys_t   rkeys;
     uint16_t                 team_id;
     uint16_t                 create_new_team;
     ucc_coll_args_t          coll_args;
+    buf_info_v_t             src_v;
+    buf_info_v_t             dst_v;
     uint32_t                 count_total;
     uint32_t                 coll_id;
 } ucc_tl_dpu_put_sync_t;
@@ -174,7 +182,7 @@ typedef struct ucc_tl_dpu {
 } ucc_tl_dpu_t;
 
 #define UCC_TL_DPU_SUPPORTED_COLLS \
-    (UCC_COLL_TYPE_ALLREDUCE | UCC_COLL_TYPE_ALLTOALL)
+    (UCC_COLL_TYPE_ALLREDUCE | UCC_COLL_TYPE_ALLTOALL | UCC_COLL_TYPE_ALLTOALLV)
 
 #define UCC_TL_DPU_TEAM_LIB(_team)                                          \
     (ucc_derived_of((_team)->super.super.context->lib, ucc_tl_dpu_lib_t))

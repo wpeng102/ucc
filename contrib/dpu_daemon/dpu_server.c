@@ -26,6 +26,50 @@ ucc_status_t ucc_mc_reduce(const void *src1, const void *src2, void *dst,
                            size_t count, ucc_datatype_t dtype,
                            ucc_reduction_op_t op, ucc_memory_type_t mem_type);
 
+/* TODO: include ucc_coll_utils.h */
+static inline size_t
+ucc_coll_args_get_count(const ucc_coll_args_t *args, const ucc_count_t *counts,
+                        ucc_rank_t idx)
+{
+    if ((args->mask & UCC_COLL_ARGS_FIELD_FLAGS) &&
+        (args->flags & UCC_COLL_ARGS_FLAG_COUNT_64BIT)) {
+        return ((uint64_t *)counts)[idx];
+    }
+    return ((uint32_t *)counts)[idx];
+}
+
+static inline size_t
+ucc_coll_args_get_displacement(const ucc_coll_args_t *args,
+                               const ucc_aint_t *displacements, ucc_rank_t idx)
+{
+    if ((args->mask & UCC_COLL_ARGS_FIELD_FLAGS) &&
+        (args->flags & UCC_COLL_ARGS_FLAG_DISPLACEMENTS_64BIT)) {
+        return ((uint64_t *)displacements)[idx];
+    }
+    return ((uint32_t *)displacements)[idx];
+}
+
+static inline size_t
+ucc_coll_args_get_total_count(const ucc_coll_args_t *args,
+                              const ucc_count_t *counts, ucc_rank_t size)
+{
+    size_t count = 0;
+    ucc_rank_t i;
+    // TODO switch to base args and cache total count there - can we do it ?
+    if ((args->mask & UCC_COLL_ARGS_FIELD_FLAGS) &&
+        (args->flags & UCC_COLL_ARGS_FLAG_COUNT_64BIT)) {
+        for (i = 0; i < size; i++) {
+            count += ((uint64_t *)counts)[i];
+        }
+    } else {
+        for (i = 0; i < size; i++) {
+            count += ((uint32_t *)counts)[i];
+        }
+    }
+
+    return count;
+}
+
 static void dpu_thread_set_affinity(thread_ctx_t *ctx)
 {
     int i;
@@ -122,34 +166,56 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
     size_t team_rank, team_size;
     dpu_hc_t *hc = ctx->hc;
     ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+    ucc_coll_args_t *args = &lsync->coll_args;
     UCC_CHECK(ucc_team_get_size(team, &team_size));
     UCC_CHECK(ucc_team_get_my_ep(team, &team_rank));
 
-    size_t count_total   = lsync->count_total;
-    size_t my_count      = count_total / team_size;
-    ucc_datatype_t dtype = lsync->coll_args.src.info.datatype;
-    size_t dt_size       = dpu_ucc_dt_size(dtype);
+    ucc_datatype_t sdt   = lsync->coll_args.src.info_v.datatype;
+    ucc_datatype_t rdt   = lsync->coll_args.dst.info_v.datatype;
+    size_t sdt_size      = dpu_ucc_dt_size(sdt);
+    size_t rdt_size      = dpu_ucc_dt_size(rdt);
 
-    CTX_LOG("Doing alltoallv on team id %d team size %d count %lu\n", lsync->team_id, team_size, count_total);
+    CTX_LOG("Doing alltoallv on team id %d team size %d\n", lsync->team_id, team_size);
 
     for(int i = 0; i < team_size; i++) {
         int src_rank = (team_rank + i) % team_size;
-        size_t src_offset = team_rank * my_count * dt_size;
-        size_t dst_offset = src_rank * my_count * dt_size;
-        size_t count_done = 0;
+        
+        size_t src_count = ucc_coll_args_get_count(args, lsync->src_v.counts, src_rank);
+        size_t src_displ = ucc_coll_args_get_displacement(args, lsync->src_v.displs, src_rank);
 
-        while (count_done < my_count) {
+        size_t dst_count = ucc_coll_args_get_count(args, lsync->dst_v.counts, team_rank);
+        size_t dst_displ = ucc_coll_args_get_displacement(args, lsync->dst_v.displs, team_rank);
+
+        CTX_LOG("src rank %d count %d displ %d dtsize %d dst rank %d count %d displ %d dtsize %d\n",
+                src_rank,  src_count, src_displ, sdt_size,
+                team_rank, dst_count, dst_displ, rdt_size);
+
+        if (!src_count) {
+            continue;
+        }
+
+        /* TODO: is this correct? */
+        assert(src_count == dst_count);
+
+        size_t src_offset = src_displ * sdt_size;
+        size_t dst_offset = dst_displ * rdt_size;
+
+        size_t count_done = 0;
+        while (count_done < src_count) {
             ucs_status_ptr_t ucp_req = NULL;
-            size_t remaining_elems = my_count - count_done;
-            size_t count_step = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
-            size_t bytes_step = count_step * dt_size;
+            size_t remaining_elems = src_count - count_done;
+            size_t count_step = DPU_MIN(hc->pipeline.buffer_size/sdt_size, remaining_elems);
+            size_t bytes_step = count_step * sdt_size;
+
+            DPU_LOG("Element count %lu done %lu remaining %lu this step %lu\n",
+                    src_count, count_done, remaining_elems, count_step);
 
             void * src_addr  = hc->host_rkeys[src_rank].src_buf + src_offset;
             void * tmp_addr  = hc->pipeline.stages[0].accbuf.buf;
             void * dst_addr  = lsync->rkeys.dst_buf + dst_offset;
 
             DPU_LOG("Issue Get from %d src offset %lu count %lu bytes %lu\n",
-                    src_rank, src_offset, my_count, bytes_step);
+                    src_rank, src_offset, src_count, bytes_step);
             ucp_worker_fence(hc->ucp_worker);
             ucp_req = ucp_get_nbx(
                 hc->host_eps[src_rank], tmp_addr, bytes_step, (uint64_t)src_addr,
@@ -159,8 +225,8 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
                 return UCC_ERR_NO_RESOURCE;
             }
 
-            DPU_LOG("Issue Put to host dst offset %lu dst offset %lu count %lu bytes %lu\n",
-                    dst_offset, my_count, bytes_step);
+            DPU_LOG("Issue Put to host dst offset %lu count %lu bytes %lu\n",
+                    dst_offset, dst_count, bytes_step);
             ucp_worker_fence(hc->ucp_worker);
             ucp_req = ucp_put_nbx(
                 hc->localhost_ep, tmp_addr, bytes_step, (uint64_t)dst_addr,
@@ -178,52 +244,6 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
 
     return UCC_OK;
 }
-
-#if 0
-ucc_status_t ucc_tl_nccl_alltoallv_start(ucc_coll_task_t *coll_task)
-{
-    ucc_tl_nccl_task_t *task   = ucc_derived_of(coll_task, ucc_tl_nccl_task_t);
-    ucc_coll_args_t    *args   = &TASK_ARGS(task);
-    ucc_tl_nccl_team_t *team   = TASK_TEAM(task);
-    ucc_ee_h            ee     = coll_task->ee;
-    cudaStream_t        stream = (ee) ? (cudaStream_t) ee->ee_context : team->stream;
-    ucc_status_t        status = UCC_OK;
-    ptrdiff_t           sbuf   = (ptrdiff_t)args->src.info_v.buffer;
-    ptrdiff_t           rbuf   = (ptrdiff_t)args->dst.info_v.buffer;
-    size_t sdt_size, rdt_size, count, displ;
-    ucc_rank_t peer;
-
-    task->super.super.status = UCC_INPROGRESS;
-    sdt_size                 = ucc_dt_size(args->src.info_v.datatype);
-    rdt_size                 = ucc_dt_size(args->dst.info_v.datatype);
-    UCC_TL_NCCL_PROFILE_REQUEST_EVENT(coll_task, "nccl_alltoallv_start", 0);
-    NCCLCHECK_GOTO(ncclGroupStart(), exit_coll, status, UCC_TL_TEAM_LIB(team));
-    for (peer = 0; peer < UCC_TL_TEAM_SIZE(team); peer++) {
-        count = ucc_coll_args_get_count(args, args->src.info_v.counts, peer);
-        if (count != 0) {
-            displ = ucc_coll_args_get_displacement(
-                args, args->src.info_v.displacements, peer);
-            NCCLCHECK_GOTO(ncclSend((void *)(sbuf + displ * sdt_size),
-                                    count * sdt_size, ncclChar, peer,
-                                    team->nccl_comm, stream),
-                        exit_coll, status, UCC_TL_TEAM_LIB(team));
-        }
-        count = ucc_coll_args_get_count(args, args->dst.info_v.counts, peer);
-        if (count != 0) {
-            displ = ucc_coll_args_get_displacement(
-                args, args->dst.info_v.displacements, peer);
-            NCCLCHECK_GOTO(ncclRecv((void *)(rbuf + displ * rdt_size),
-                                    count * rdt_size, ncclChar, peer,
-                                    team->nccl_comm, stream),
-                        exit_coll, status, UCC_TL_TEAM_LIB(team));
-        }
-    }
-    NCCLCHECK_GOTO(ncclGroupEnd(), exit_coll, status, UCC_TL_TEAM_LIB(team));
-    status = ucc_tl_nccl_collective_sync(task, stream);
-exit_coll:
-    return status;
-}
-#endif
 
 static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {

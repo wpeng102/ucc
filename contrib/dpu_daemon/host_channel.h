@@ -23,6 +23,7 @@
 #include <ucc/api/ucc.h>
 #include <ucp/api/ucp.h>
 
+#define MAX_NUM_RANKS       128
 #define MAX_RKEY_LEN        1024
 #define IP_STRING_LEN       50
 #define PORT_STRING_LEN     8
@@ -70,6 +71,11 @@ typedef struct host_rkey_t {
     void   *rank_list;
 } host_rkey_t;
 
+typedef struct buf_info_v_t {
+    ucc_count_t counts[MAX_NUM_RANKS];
+    ucc_count_t displs[MAX_NUM_RANKS];
+} buf_info_v_t;
+
 /* sync struct type
  * use it for counter, dtype, ar op, length */
 typedef struct dpu_put_sync_t {
@@ -77,6 +83,8 @@ typedef struct dpu_put_sync_t {
     uint16_t            team_id;
     uint16_t            create_new_team;
     ucc_coll_args_t     coll_args;
+    buf_info_v_t        src_v;
+    buf_info_v_t        dst_v;
     volatile uint32_t   count_total;
     volatile uint32_t   coll_id;
 } dpu_put_sync_t;
