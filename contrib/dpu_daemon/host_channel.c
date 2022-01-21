@@ -420,6 +420,7 @@ static ucs_status_t _dpu_create_host_eps(dpu_hc_t *hc, void *rem_worker_addr, si
     hc->host_rkeys = calloc(hc->world_size, sizeof(host_rkey_t));
     hc->host_src_rkeys = calloc(hc->world_size, sizeof(ucp_rkey_h));
     hc->host_dst_rkeys = calloc(hc->world_size, sizeof(ucp_rkey_h));
+    hc->world_lsyncs = calloc(hc->world_size, sizeof(dpu_put_sync_t));
     
     memset(&hc->req_param, 0, sizeof(hc->req_param));
     // hc->req_param.op_attr_mask = UCP_OP_ATTR_FLAG_NO_IMM_CMPL;

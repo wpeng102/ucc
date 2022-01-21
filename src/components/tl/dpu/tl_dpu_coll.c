@@ -132,10 +132,28 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
 {
     ucc_status_t status = UCC_OK;
     ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(task->team);
-    void *src_buf = task->args.src.info.buffer;
-    void *dst_buf = task->args.dst.info.buffer;
-    size_t src_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
-    size_t dst_len = task->args.dst.info.count * ucc_dt_size(task->args.dst.info.datatype);
+
+    void *src_buf, *dst_buf;
+    size_t src_len, dst_len;
+
+    if (task->args.coll_type == UCC_COLL_TYPE_ALLTOALLV) {
+        src_buf = task->args.src.info_v.buffer;
+        dst_buf = task->args.dst.info_v.buffer;
+
+        src_len = dst_len = 0;
+        for (int i=0; i<task->team->size; i++) {
+            src_len += task->args.src.info_v.counts[i];
+            dst_len += task->args.dst.info_v.counts[i];
+        }
+
+        src_len *= ucc_dt_size(task->args.src.info_v.datatype);
+        dst_len *= ucc_dt_size(task->args.dst.info_v.datatype);
+    } else {
+        src_buf = task->args.src.info.buffer;
+        dst_buf = task->args.dst.info.buffer;
+        src_len = task->args.src.info.count * ucc_dt_size(task->args.src.info.datatype);
+        dst_len = task->args.dst.info.count * ucc_dt_size(task->args.dst.info.datatype);
+    }
 
     status |= ucc_tl_dpu_register_buf(ctx->ucp_context, src_buf, src_len, &task->src_rkey);
     status |= ucc_tl_dpu_register_buf(ctx->ucp_context, dst_buf, dst_len, &task->dst_rkey);
@@ -429,9 +447,9 @@ ucc_status_t ucc_tl_dpu_alltoallv_init(ucc_tl_dpu_task_t *task)
     task->put_sync.team_id           = base_team->params.id;
     task->put_sync.create_new_team   = 0;
 
-    memcpy(task->put_sync.src_v.counts, coll_args->src.info_v.counts, team->size * sizeof(ucc_count_t));
+    memcpy(task->put_sync.src_v.counts, coll_args->src.info_v.counts,        team->size * sizeof(ucc_count_t));
     memcpy(task->put_sync.src_v.displs, coll_args->src.info_v.displacements, team->size * sizeof(ucc_count_t));
-    memcpy(task->put_sync.dst_v.counts, coll_args->dst.info_v.counts, team->size * sizeof(ucc_count_t));
+    memcpy(task->put_sync.dst_v.counts, coll_args->dst.info_v.counts,        team->size * sizeof(ucc_count_t));
     memcpy(task->put_sync.dst_v.displs, coll_args->dst.info_v.displacements, team->size * sizeof(ucc_count_t));
 
     ucc_tl_dpu_init_rkeys(task);

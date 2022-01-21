@@ -170,32 +170,29 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
     UCC_CHECK(ucc_team_get_size(team, &team_size));
     UCC_CHECK(ucc_team_get_my_ep(team, &team_rank));
 
-    ucc_datatype_t sdt   = lsync->coll_args.src.info_v.datatype;
-    ucc_datatype_t rdt   = lsync->coll_args.dst.info_v.datatype;
-    size_t sdt_size      = dpu_ucc_dt_size(sdt);
-    size_t rdt_size      = dpu_ucc_dt_size(rdt);
 
     CTX_LOG("Doing alltoallv on team id %d team size %d\n", lsync->team_id, team_size);
 
     for(int i = 0; i < team_size; i++) {
         int src_rank = (team_rank + i) % team_size;
         
-        size_t src_count = ucc_coll_args_get_count(args, lsync->src_v.counts, src_rank);
-        size_t src_displ = ucc_coll_args_get_displacement(args, lsync->src_v.displs, src_rank);
+        dpu_put_sync_t *src_lsync = &hc->world_lsyncs[src_rank];
+        size_t src_count = ucc_coll_args_get_count(args, src_lsync->src_v.counts, team_rank);
+        size_t src_displ = ucc_coll_args_get_displacement(args, src_lsync->src_v.displs, team_rank);
 
-        size_t dst_count = ucc_coll_args_get_count(args, lsync->dst_v.counts, team_rank);
-        size_t dst_displ = ucc_coll_args_get_displacement(args, lsync->dst_v.displs, team_rank);
+        size_t dst_count = ucc_coll_args_get_count(args, lsync->dst_v.counts, src_rank);
+        size_t dst_displ = ucc_coll_args_get_displacement(args, lsync->dst_v.displs, src_rank);
+
+        ucc_datatype_t sdt   = src_lsync->coll_args.src.info_v.datatype;
+        ucc_datatype_t rdt   = lsync->coll_args.dst.info_v.datatype;
+        size_t sdt_size      = dpu_ucc_dt_size(sdt);
+        size_t rdt_size      = dpu_ucc_dt_size(rdt);
 
         CTX_LOG("src rank %d count %d displ %d dtsize %d dst rank %d count %d displ %d dtsize %d\n",
                 src_rank,  src_count, src_displ, sdt_size,
                 team_rank, dst_count, dst_displ, rdt_size);
 
-        if (!src_count) {
-            continue;
-        }
-
-        /* TODO: is this correct? */
-        assert(src_count == dst_count);
+        assert(src_count * sdt_size == dst_count * rdt_size);
 
         size_t src_offset = src_displ * sdt_size;
         size_t dst_offset = dst_displ * rdt_size;
@@ -258,8 +255,8 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
     unsigned int team_size = 0;
     UCC_CHECK(ucc_team_get_size(team, &team_size));
-    void *src_buf = &lsync->rkeys;
-    void *dst_buf = hc->host_rkeys;
+    void *src_buf = lsync;
+    void *dst_buf = hc->world_lsyncs;
 
     assert(NULL != lsync->rkeys.src_rkey_buf);
     assert(NULL != lsync->rkeys.dst_rkey_buf);
@@ -272,13 +269,13 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
         .coll_type = UCC_COLL_TYPE_ALLGATHER,
         .src.info = {
             .buffer   = src_buf,
-            .count    = sizeof(host_rkey_t),
+            .count    = sizeof(dpu_put_sync_t),
             .datatype = UCC_DT_INT8,
             .mem_type = UCC_MEMORY_TYPE_HOST,
         },
         .dst.info = {
             .buffer   = dst_buf,
-            .count    = sizeof(host_rkey_t) * team_size,
+            .count    = sizeof(dpu_put_sync_t) * team_size,
             .datatype = UCC_DT_INT8,
             .mem_type = UCC_MEMORY_TYPE_HOST,
         },
@@ -294,6 +291,7 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     UCC_CHECK(ucc_collective_finalize(request));
 
     for (i = 0; i < team_size; i++) {
+        memcpy(&hc->host_rkeys[i], &hc->world_lsyncs[i].rkeys, sizeof(host_rkey_t));
         assert(NULL != hc->host_rkeys[i].src_rkey_buf);
         assert(NULL != hc->host_rkeys[i].dst_rkey_buf);
         assert(0    <  hc->host_rkeys[i].src_rkey_len);
