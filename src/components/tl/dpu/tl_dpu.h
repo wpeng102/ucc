@@ -25,6 +25,7 @@
 #define UCC_TL_DPU_EXCHANGE_ADDR_TAG 3ull
 
 #define MAX_DPU_HOST_NAME 256
+#define MAX_DPU_HCA_NAME  20
 #define MAX_RKEY_LEN      1024
 #define MAX_DPU_COUNT     16 /* Max dpu per node */
 
