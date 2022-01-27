@@ -81,6 +81,8 @@ typedef struct buf_info_v_t {
 typedef struct dpu_put_sync_t {
     host_rkey_t         rkeys;
     uint16_t            team_id;
+    uint16_t            rail;
+    uint16_t            dpu_per_node_cnt;
     uint16_t            create_new_team;
     ucc_coll_args_t     coll_args;
     buf_info_v_t        src_v;
@@ -194,6 +196,10 @@ typedef struct dpu_hc_t {
     host_rkey_t *host_rkeys;
     ucp_rkey_h *host_src_rkeys;
     ucp_rkey_h *host_dst_rkeys;
+
+    /* Multi-rail support */
+    int rail;
+    int dpu_per_node_cnt;
 
     /* global visibility of collectives */
     dpu_put_sync_t *world_lsyncs;

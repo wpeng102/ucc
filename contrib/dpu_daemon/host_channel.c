@@ -301,7 +301,7 @@ static void _dpu_hc_reset_stage(dpu_stage_t *stage, dpu_hc_t *hc)
 {
     stage->phase = WAIT;
     stage->get_idx = stage->red_idx = 0;
-    stage->src_rank = stage->dst_rank = hc->world_rank;
+    stage->src_rank = stage->dst_rank = hc->world_rank / hc->dpu_per_node_cnt;
     stage->done_get = stage->done_red = stage->done_put = 0;
     _dpu_hc_reset_buf(&stage->accbuf);
     _dpu_hc_reset_buf(&stage->getbuf[0]);
@@ -731,6 +731,8 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     size_t count = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
     size_t get_offset = hc->pipeline.my_offset + hc->pipeline.count_received * dt_size;
     int src_rank = stage->src_rank;
+    int ep_src_rank = src_rank * hc->dpu_per_node_cnt + 
+        (hc->world_rank % hc->dpu_per_node_cnt);
     getbuf->count = count;
 
     if (0 == count) {
@@ -738,7 +740,7 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     }
 
     size_t data_size = count * dt_size;
-    void *src_addr = hc->host_rkeys[src_rank].src_buf + get_offset;
+    void *src_addr = hc->host_rkeys[ep_src_rank].src_buf + get_offset;
     void *dst_addr = getbuf->buf;
 
     DPU_LOG("Issue Get from %d offset %lu src %p dst %p count %lu bytes %lu\n",
@@ -746,10 +748,10 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     
     ucp_worker_fence(hc->ucp_worker);
     getbuf->ucp_req =
-            ucp_get_nbx(hc->host_eps[src_rank], dst_addr, data_size,
-            (uint64_t)src_addr, hc->host_src_rkeys[src_rank], &hc->req_param);
+            ucp_get_nbx(hc->host_eps[ep_src_rank], dst_addr, data_size,
+            (uint64_t)src_addr, hc->host_src_rkeys[ep_src_rank], &hc->req_param);
     
-    stage->src_rank = (src_rank + 1) % hc->world_size; // FIXME team size
+    stage->src_rank = (src_rank + 1) % (hc->world_size / hc->dpu_per_node_cnt); // FIXME team size
     return UCS_OK;
 }
 
@@ -764,10 +766,13 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     size_t count = accbuf->count;
     size_t put_offset = hc->pipeline.my_offset + hc->pipeline.count_serviced * dt_size;
     int dst_rank = stage->dst_rank;
+    int ep_dst_rank = dst_rank * hc->dpu_per_node_cnt + 
+        (hc->world_rank % hc->dpu_per_node_cnt);
+
 
     size_t data_size = count * dt_size;
     void *src_addr = accbuf->buf;
-    void *dst_addr = hc->host_rkeys[dst_rank].dst_buf + put_offset;
+    void *dst_addr = hc->host_rkeys[ep_dst_rank].dst_buf + put_offset;
 
     DPU_LOG("Issue Put to %d offset %lu src %p dst %p count %lu bytes %lu\n",
             dst_rank, put_offset, src_addr, dst_addr, count, data_size);
@@ -778,10 +783,10 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     
     ucp_worker_fence(hc->ucp_worker);
     accbuf->ucp_req =
-            ucp_put_nbx(hc->host_eps[dst_rank], src_addr, data_size,
-            (uint64_t)dst_addr, hc->host_dst_rkeys[dst_rank], &hc->req_param);
+            ucp_put_nbx(hc->host_eps[ep_dst_rank], src_addr, data_size,
+            (uint64_t)dst_addr, hc->host_dst_rkeys[ep_dst_rank], &hc->req_param);
 
-    stage->dst_rank = (dst_rank + 1) % hc->world_size; // FIXME team size
+    stage->dst_rank = (dst_rank + 1) % (hc->world_size / hc->dpu_per_node_cnt); // FIXME team size
     return UCS_OK;
 }
 
@@ -837,7 +842,9 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
     ucc_status_t status;
     ucs_status_ptr_t request;
     dpu_pipeline_t *pp = &hc->pipeline;
-    int ranks = hc->world_size;
+    /* TODO change the ranks to represent the team size, also change the name
+     * */
+    int ranks = (hc->world_size / hc->dpu_per_node_cnt);
 
     for (i=0; i<10; i++) {
         if (ucp_worker_progress(hc->ucp_worker)) {
