@@ -201,6 +201,7 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     ucc_tl_dpu_put_request_t *put_req = &task->dpu_task_list[rail].task_reqs.put_req;
     ucc_tl_dpu_sub_task_t *dpu_task = &task->dpu_task_list[rail];
     ucp_request_param_t req_param = {0};
+    ucp_tag_t req_tag = 0;
 
     assert(dpu_task->status != UCC_TL_DPU_TASK_STATUS_POSTED);
     dpu_task->status = UCC_TL_DPU_TASK_STATUS_POSTED;
@@ -210,10 +211,12 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     assert(task->dpu_per_node_cnt > 0);
     assert(dpu_task->put_sync.dpu_per_node_cnt > 0);
     ucp_worker_fence(ctx->dpu_ctx_list[rail].ucp_worker);
-    put_req->sync_req =
-        ucp_put_nbx(ctx->dpu_ctx_list[rail].ucp_ep, &dpu_task->put_sync,
-                sizeof(dpu_task->put_sync), team->dpu_sync_list[rail].rem_ctrl_seg,
-                team->dpu_sync_list[rail].rem_ctrl_seg_key, &req_param);
+    // put_req->sync_req =
+    //     ucp_put_nbx(ctx->dpu_ctx_list[rail].ucp_ep, &dpu_task->put_sync,
+    //             sizeof(dpu_task->put_sync), team->dpu_sync_list[rail].rem_ctrl_seg,
+    //             team->dpu_sync_list[rail].rem_ctrl_seg_key, &req_param);
+    put_req->sync_req = ucp_tag_send_nbx(ctx->dpu_ctx_list[rail].ucp_ep,
+        &dpu_task->put_sync, sizeof(dpu_task->put_sync), req_tag, &req_param);
     if (ucc_tl_dpu_req_check(team, put_req->sync_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
     }

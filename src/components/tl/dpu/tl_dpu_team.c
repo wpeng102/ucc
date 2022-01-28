@@ -383,6 +383,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
     ucc_tl_dpu_put_sync_t       hangup;
     ucs_status_ptr_t            hangup_req;
     ucp_request_param_t         req_param = {0};
+    ucp_tag_t                   req_tag = 0;
     ucc_tl_dpu_sync_t           *dpu_sync = NULL;
     ucc_tl_dpu_connect_t        *dpu_connect = NULL;
     int rail;
@@ -407,9 +408,8 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
         tl_info(ctx->super.super.lib, 
                 "sending hangup/team_free to dpu dpu_sync, coll id = %u", 
                 hangup.coll_id);
-        hangup_req = ucp_put_nbx(dpu_connect->ucp_ep, &hangup, sizeof(hangup),
-                                 dpu_sync->rem_ctrl_seg, dpu_sync->rem_ctrl_seg_key,
-                                 &req_param);
+        hangup_req = ucp_tag_send_nbx(dpu_connect->ucp_ep,
+                        &hangup, sizeof(hangup), req_tag, &req_param);
         if (ucc_tl_dpu_req_check(team, hangup_req) != UCC_OK) {
             return UCC_ERR_NO_MESSAGE;
         }

@@ -678,14 +678,19 @@ err:
 int dpu_hc_wait(dpu_hc_t *hc, unsigned int next_coll_id)
 {
     dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
+    ucp_request_param_t req_param = {0};
+    ucp_tag_t req_tag = 0, tag_mask = 0;
+    ucs_status_t status;
 
-    while( lsync->coll_id < next_coll_id) {
-        ucp_worker_progress(hc->ucp_worker);
-    }
+    ucs_status_ptr_t recv_req = ucp_tag_recv_nbx(hc->ucp_worker,
+            lsync, sizeof(dpu_put_sync_t),
+            req_tag, tag_mask, &req_param);
+    status = _dpu_request_wait(hc->ucp_worker, recv_req);
 
     DPU_LOG("Got next coll id from host: %u was expecting %u\n", lsync->coll_id, next_coll_id);
+    assert(lsync->coll_id == next_coll_id);
+
     host_rkey_t *rkeys = &lsync->rkeys;
-    ucs_status_t status;
 
     status = ucp_ep_rkey_unpack(hc->localhost_ep, (void*)rkeys->src_rkey_buf, &hc->src_rkey);
 
