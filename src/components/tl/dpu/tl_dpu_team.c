@@ -636,7 +636,6 @@ ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
             dpu_sync = &team->dpu_sync_list[rail];
             dpu_connect = &ctx->dpu_ctx_list[rail];
 
-            assert(dpu_sync->conn_buf->rem_rkeys != 0);
             assert(dpu_sync->conn_buf->rem_addresses != 0);
             assert(dpu_sync->rem_ctrl_seg_key != 0);
             assert(dpu_sync->rem_ctrl_seg != 0);
