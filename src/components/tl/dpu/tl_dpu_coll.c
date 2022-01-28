@@ -199,8 +199,8 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
     ucc_tl_dpu_context_t *ctx, ucc_tl_dpu_team_t *team, int rail)
 {
     ucc_tl_dpu_put_request_t *put_req = &task->dpu_task_list[rail].task_reqs.put_req;
-    ucp_request_param_t req_param = {0};
     ucc_tl_dpu_sub_task_t *dpu_task = &task->dpu_task_list[rail];
+    ucp_request_param_t req_param = {0};
 
     assert(dpu_task->status != UCC_TL_DPU_TASK_STATUS_POSTED);
     dpu_task->status = UCC_TL_DPU_TASK_STATUS_POSTED;
@@ -380,12 +380,12 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
         coll_args->dst.info.mem_type = coll_args->src.info.mem_type;
     }
 
-    task->super.post     = ucc_tl_dpu_allreduce_start;
-    task->super.progress = ucc_tl_dpu_allreduce_progress;
+    assert(task->status == UCC_TL_DPU_TASK_STATUS_INIT);
 
     ucc_tl_dpu_init_rkeys(task);
 
-    assert(task->status == UCC_TL_DPU_TASK_STATUS_INIT);
+    task->super.post     = ucc_tl_dpu_allreduce_start;
+    task->super.progress = ucc_tl_dpu_allreduce_progress;
 
     /* Set sync information for DPU */
     for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
@@ -393,6 +393,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
         task_put_sync = &task->dpu_task_list[rail].put_sync;
         memcpy(&task_put_sync->coll_args, coll_args, sizeof(ucc_coll_args_t));
 
+        task_put_sync->count_total       = coll_args->src.info.count;
         task_put_sync->coll_id           = team->dpu_sync_list[rail].coll_id_issued;
         task_put_sync->team_id           = base_team->params.id;
         task_put_sync->create_new_team   = 0;
@@ -472,13 +473,6 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
         coll_args->src.info.buffer = coll_args->dst.info.buffer;
     }
 
-    task->super.post     = ucc_tl_dpu_alltoall_start;
-    task->super.progress = ucc_tl_dpu_alltoall_progress;
-
-    ucc_tl_dpu_init_rkeys(task);
-
-    assert(task->dpu_per_node_cnt > 0);
-
     /* Set sync information for DPU */
     int rail = 0;
     task->dpu_per_node_cnt = 1;
@@ -486,11 +480,17 @@ ucc_status_t ucc_tl_dpu_alltoall_init(ucc_tl_dpu_task_t *task)
     task_put_sync = &task->dpu_task_list[rail].put_sync;
     memcpy(&task_put_sync->coll_args, coll_args, sizeof(ucc_coll_args_t));
 
+    task_put_sync->count_total      = coll_args->src.info.count;
     task_put_sync->coll_id          = team->dpu_sync_list[rail].coll_id_issued;
     task_put_sync->team_id          = base_team->params.id;
     task_put_sync->create_new_team  = 0;
     task_put_sync->dpu_per_node_cnt = task->dpu_per_node_cnt;
     task_put_sync->rail             = rail;
+
+    ucc_tl_dpu_init_rkeys(task);
+    
+    task->super.post     = ucc_tl_dpu_alltoall_start;
+    task->super.progress = ucc_tl_dpu_alltoall_progress;
 
     return UCC_OK;
 }
@@ -542,7 +542,7 @@ ucc_status_t ucc_tl_dpu_alltoallv_init(ucc_tl_dpu_task_t *task)
 
     /* TODO: is in_place supported? */
     if (UCC_IS_INPLACE(*coll_args)) {
-        coll_args->src.info.buffer = coll_args->dst.info.buffer;
+        coll_args->src.info_v.buffer = coll_args->dst.info_v.buffer;
     }
 
     /* Set sync information for DPU */
