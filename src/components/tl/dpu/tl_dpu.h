@@ -173,6 +173,7 @@ UCC_CLASS_DECLARE(ucc_tl_dpu_team_t, ucc_base_context_t *,
 
 typedef struct ucc_tl_dpu_task_req_t {
     ucc_tl_dpu_put_request_t put_req;
+    ucs_status_ptr_t recv_req;
 } ucc_tl_dpu_task_req_t;
 
 typedef struct ucc_tl_dpu_sub_task {

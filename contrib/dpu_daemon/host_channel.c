@@ -702,15 +702,17 @@ int dpu_hc_wait(dpu_hc_t *hc, unsigned int next_coll_id)
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
 {
     ucs_status_t status;
+    ucp_tag_t req_tag = 0;
+
     DPU_LOG("Flushing host ep for coll_id: %d\n", coll_sync->coll_id);
     _dpu_worker_flush(hc);
 
     assert(hc->pipeline.sync_req == NULL);
     ucp_worker_fence(hc->ucp_worker);
-    DPU_LOG("Notify host completed coll_id: %d, serviced: %lu\n", coll_sync->coll_id, coll_sync->count_serviced);
-    hc->pipeline.sync_req = ucp_put_nbx(hc->localhost_ep, coll_sync, sizeof(dpu_get_sync_t),
-                          hc->sync_addr, hc->sync_rkey,
-                          &hc->req_param);
+    DPU_LOG("Notify host completed coll_id: %d, serviced: %lu\n",
+            coll_sync->coll_id, coll_sync->count_serviced);
+    hc->pipeline.sync_req = ucp_tag_send_nbx(hc->localhost_ep,
+            coll_sync, sizeof(dpu_get_sync_t), req_tag, &hc->req_param);
     status = _dpu_request_wait(hc->ucp_worker, hc->pipeline.sync_req);
     hc->pipeline.sync_req = NULL;
     if (status != UCS_OK) {
