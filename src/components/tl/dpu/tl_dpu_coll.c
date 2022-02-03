@@ -196,26 +196,26 @@ static void ucc_tl_dpu_init_put(ucc_tl_dpu_context_t *ctx,
     put_sync->rkeys.dst_buf = task->args.dst.info.buffer;
 }
 
-static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
+static ucc_status_t ucc_tl_dpu_issue_send( ucc_tl_dpu_task_t *task,
     ucc_tl_dpu_context_t *ctx, ucc_tl_dpu_team_t *team, int rail)
 {
-    ucc_tl_dpu_put_request_t *put_req = &task->dpu_task_list[rail].task_reqs.put_req;
     ucc_tl_dpu_sub_task_t *dpu_task = &task->dpu_task_list[rail];
+    ucc_tl_dpu_task_req_t *task_reqs = &dpu_task->task_reqs;
     ucp_request_param_t req_param = {0};
     ucp_tag_t req_tag = 0;
 
     assert(dpu_task->status != UCC_TL_DPU_TASK_STATUS_POSTED);
     dpu_task->status = UCC_TL_DPU_TASK_STATUS_POSTED;
     ucc_tl_dpu_init_put(ctx, task, team, rail);
-    assert(put_req->sync_req == NULL);
+    assert(task_reqs->send_req == NULL);
 
     assert(task->dpu_per_node_cnt > 0);
     assert(dpu_task->put_sync.dpu_per_node_cnt > 0);
     ucp_worker_fence(ctx->dpu_ctx_list[rail].ucp_worker);
 
-    put_req->sync_req = ucp_tag_send_nbx(ctx->dpu_ctx_list[rail].ucp_ep,
+    task_reqs->send_req = ucp_tag_send_nbx(ctx->dpu_ctx_list[rail].ucp_ep,
         &dpu_task->put_sync, sizeof(dpu_task->put_sync), req_tag, &req_param);
-    if (ucc_tl_dpu_req_check(team, put_req->sync_req) != UCC_OK) {
+    if (ucc_tl_dpu_req_check(team, task_reqs->send_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
     }
 
@@ -223,8 +223,8 @@ static ucc_status_t ucc_tl_dpu_issue_put( ucc_tl_dpu_task_t *task,
             task, dpu_task->put_sync.coll_args.coll_type, dpu_task->put_sync.coll_id,
             dpu_task->put_sync.count_total);
  
-    ucc_tl_dpu_req_wait(ctx->dpu_ctx_list[rail].ucp_worker, put_req->sync_req);
-    put_req->sync_req = NULL;
+    ucc_tl_dpu_req_wait(ctx->dpu_ctx_list[rail].ucp_worker, task_reqs->send_req);
+    task_reqs->send_req = NULL;
     return UCC_OK;
 }
 
@@ -263,7 +263,7 @@ static ucc_status_t ucc_tl_dpu_send_dpu_task(
         tl_info(UCC_TL_TEAM_LIB(task->team), 
                 "Put to DPU rail: %d coll task: %p, coll id %d, DPU count: %d", 
                 rail, task, sub_task->put_sync.coll_id, task->dpu_per_node_cnt);
-        ucc_tl_dpu_issue_put(task, ctx, team, rail);
+        ucc_tl_dpu_issue_send(task, ctx, team, rail);
         ucc_tl_dpu_issue_recv(task, ctx, team, rail);
         assert(sub_task->status == UCC_TL_DPU_TASK_STATUS_POSTED);
     }

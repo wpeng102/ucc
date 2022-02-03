@@ -120,13 +120,6 @@ typedef struct ucc_tl_dpu_put_sync_t {
     uint32_t                 coll_id;
 } ucc_tl_dpu_put_sync_t;
 
-
-typedef struct ucc_tl_dpu_put_request {
-    ucs_status_ptr_t data_req;
-    ucs_status_ptr_t sync_req;
-    ucc_tl_dpu_put_sync_t sync_data;
-} ucc_tl_dpu_put_request_t;
-
 typedef struct ucc_tl_dpu_connect_s {
     ucp_mem_map_params_t    mmap_params;
     void                    *get_sync_rkey_buf;
@@ -172,7 +165,7 @@ UCC_CLASS_DECLARE(ucc_tl_dpu_team_t, ucc_base_context_t *,
                   const ucc_base_team_params_t *);
 
 typedef struct ucc_tl_dpu_task_req_t {
-    ucc_tl_dpu_put_request_t put_req;
+    ucs_status_ptr_t send_req;
     ucs_status_ptr_t recv_req;
 } ucc_tl_dpu_task_req_t;
 
