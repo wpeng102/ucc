@@ -277,7 +277,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
 {
     int i;
     ucc_tl_dpu_team_t *team = task->team;
-    int rail = 0, rail_progressed_cnt = 0;
+    int rail = 0, rails_done = 0;
     ucc_tl_dpu_sub_task_t *sub_task = NULL;
 
     assert (task->status == UCC_TL_DPU_TASK_STATUS_POSTED);
@@ -305,20 +305,15 @@ static ucc_status_t ucc_tl_dpu_check_progress(
             team->dpu_sync_list[rail].coll_id_completed = ++dpu_connect->coll_id_completed;
             assert(team->dpu_sync_list[rail].coll_id_completed == sub_task->get_sync.coll_id);
             sub_task->status = UCC_TL_DPU_TASK_STATUS_DONE;
+
+            tl_info(UCC_TL_TEAM_LIB(task->team),
+                "Collective task %p coll id %d is marked DONE for rail: %d\n",
+                task, sub_task->put_sync.coll_id, rail);
+            rails_done++;
         }    
     }
 
-    for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
-        sub_task = &task->dpu_task_list[rail];
-        if (sub_task->status == UCC_TL_DPU_TASK_STATUS_DONE) {
-            tl_info(UCC_TL_TEAM_LIB(task->team), "Allreduce task %p coll "
-                    "id %d is marked DONE for rail: %d\n", task,
-                    sub_task->put_sync.coll_id, rail);
-            rail_progressed_cnt++;
-        }
-    }
-
-    if (rail_progressed_cnt == task->dpu_per_node_cnt) {
+    if (rails_done == task->dpu_per_node_cnt) {
         task->status = UCC_TL_DPU_TASK_STATUS_DONE;
         return UCC_OK;
     }
@@ -571,8 +566,6 @@ static ucc_status_t ucc_tl_dpu_coll_finalize(ucc_coll_task_t *coll_task)
     }
 
     assert(task->status == UCC_TL_DPU_TASK_STATUS_DONE);
-    //assert(task->get_sync.coll_id == task->put_sync.coll_id);
-    //assert(task->get_sync.count_serviced == task->put_sync.count_total);
     ucc_tl_dpu_finalize_rkeys(task);
     task->status = UCC_TL_DPU_TASK_STATUS_FINALIZED;
     ucc_mpool_put(task);

@@ -124,7 +124,6 @@ static void _dpu_listen_cleanup(dpu_hc_t *hc)
     close(hc->listenfd);
     free(hc->ip);
     free(hc->hname);
-    ucp_rkey_destroy(hc->sync_rkey);
 }
 
 
@@ -485,97 +484,6 @@ ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request
     return status;
 }
 
-static int _dpu_rmem_setup(dpu_hc_t *hc)
-{
-    int i;
-    ucs_status_t status;
-    ucp_request_param_t *param = &hc->req_param;
-    ucs_status_ptr_t request;
-    size_t rkeys_total_len = 0, rkey_lens[3];
-    uint64_t seg_base_addrs[3];
-    char *rkeys = NULL, *rkey_p;
-
-    request = ucp_tag_recv_nbx(hc->ucp_worker, &hc->sync_addr, sizeof(uint64_t),
-                                      EXCHANGE_ADDR_TAG, (uint64_t)-1, param);
-    status = _dpu_request_wait(hc->ucp_worker, request);
-    if (status) {
-        fprintf(stderr, "failed to recv sync addr (%s)\n", ucs_status_string(status));
-        goto err;
-    }
-
-    request = ucp_tag_recv_nbx(hc->ucp_worker, &rkey_lens[0], sizeof(size_t),
-                                      EXCHANGE_LENGTH_TAG, (uint64_t)-1, param);
-    status = _dpu_request_wait(hc->ucp_worker, request);
-    if (status) {
-        fprintf(stderr, "failed to recv rkey lens (%s)\n", ucs_status_string(status));
-        goto err;
-    }
-
-    rkeys = calloc(1, rkey_lens[0]);
-    request = ucp_tag_recv_nbx(hc->ucp_worker, rkeys, rkey_lens[0], EXCHANGE_RKEY_TAG,
-                               (uint64_t)-1, param);
-
-    status = _dpu_request_wait(hc->ucp_worker, request);
-    if (status) {
-        fprintf(stderr, "failed to recv hosyt rkeys (%s)\n", ucs_status_string(status));
-        goto err;
-    }
-
-    status = ucp_ep_rkey_unpack(hc->localhost_ep, rkeys, &hc->sync_rkey);
-    if (status) {
-        fprintf(stderr, "failed to ucp_ep_rkey_unpack (%s)\n", ucs_status_string(status));
-    }
-    free(rkeys);
-
-    /* compute total len */
-    for (i = 0; i < 3; i++) {
-        rkey_lens[i] = hc->mem_segs_array[i].rkey.rkey_addr_len;
-        seg_base_addrs[i] = (uint64_t)hc->mem_segs_array[i].base;
-        rkeys_total_len += rkey_lens[i];
-//         fprintf (stdout, "rkey_total_len = %lu, rkey_lens[i] = %lu\n",
-//                  rkeys_total_len, rkey_lens[i]);
-    }
-
-    rkey_p = rkeys = calloc(1, rkeys_total_len);
-
-    /* send rkey_lens */
-    request = ucp_tag_send_nbx(hc->localhost_ep, rkey_lens, 3*sizeof(size_t),
-                                     EXCHANGE_LENGTH_TAG, param);
-    status = _dpu_request_wait(hc->ucp_worker, request);
-    if (status) {
-        fprintf(stderr, "failed to send rkey lens (%s)\n", ucs_status_string(status));
-        goto err;
-    }
-
-    request = ucp_tag_send_nbx(hc->localhost_ep, seg_base_addrs, 3*sizeof(uint64_t),
-                                     EXCHANGE_ADDR_TAG, param);
-    status = _dpu_request_wait(hc->ucp_worker, request);
-    if (status) {
-        fprintf(stderr, "failed to segment base addrs (%s)\n", ucs_status_string(status));
-        goto err;
-    }
-
-    /* send rkeys */
-    for (i = 0; i < 3; i++) {
-        memcpy(rkey_p, hc->mem_segs_array[i].rkey.rkey_addr, rkey_lens[i]);
-        rkey_p+=rkey_lens[i];
-    }
-
-    request = ucp_tag_send_nbx(hc->localhost_ep, rkeys, rkeys_total_len, EXCHANGE_RKEY_TAG, param);
-    status = _dpu_request_wait(hc->ucp_worker, request);
-    if (status) {
-        fprintf(stderr, "failed to send dpu rkeys (%s)\n", ucs_status_string(status));
-        goto err;
-    }
-
-    return SUCCESS;
-
-err:
-    printf ("%s ERROR!\n", __FUNCTION__);
-    return ERROR;
-}
-
-
 int dpu_hc_accept(dpu_hc_t *hc)
 {
     int ret;
@@ -654,12 +562,6 @@ int dpu_hc_accept(dpu_hc_t *hc)
     ret = _dpu_hc_init_pipeline(hc);
     if (ret) {
         fprintf(stderr, "init pipeline failed!\n");
-        goto err;
-    }
-
-    ret = _dpu_rmem_setup(hc);
-    if (ret) {
-        fprintf(stderr, "exchange data failed!\n");
         goto err;
     }
 

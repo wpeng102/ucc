@@ -97,7 +97,7 @@ err:
 UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
                     const ucc_base_team_params_t *params)
 {
-    ucc_status_t ucc_status = UCC_OK, status = UCC_INPROGRESS; 
+    ucc_status_t ucc_status = UCC_OK;// status = UCC_INPROGRESS; 
     ucc_tl_dpu_context_t *ctx =
         ucc_derived_of(tl_context, ucc_tl_dpu_context_t);
 
@@ -105,24 +105,14 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
 
     tl_info(ctx->super.super.lib, "starting: %p team_create", self);
 
-    ucp_request_param_t req_param = {0};
-    int tc_poll = UCC_TL_DPU_TC_POLL, i, rail = 0;
-    size_t total_rkey_size = 0;
-    ucc_tl_dpu_sync_t *dpu_sync = NULL;
-    ucc_tl_dpu_connect_t *dpu_connect = NULL;
-    
     self->size      = UCC_TL_TEAM_SIZE(self);
     self->rank      = UCC_TL_TEAM_RANK(self);
     self->status    = UCC_OPERATION_INITIALIZED;
     self->dpu_per_node_cnt = ctx->dpu_per_node_cnt;
-
     assert(self->dpu_per_node_cnt > 0);
 
-    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
-        
-        dpu_sync = &self->dpu_sync_list[rail];
-        dpu_connect = &ctx->dpu_ctx_list[rail];
-
+    for (int rail = 0; rail < self->dpu_per_node_cnt; rail++) {
+        ucc_tl_dpu_sync_t *dpu_sync = &self->dpu_sync_list[rail];
         dpu_sync->ctx_rank_rkey.rkey_buf_size = 0;
         dpu_sync->coll_id_issued              = 0;
         dpu_sync->coll_id_completed           = 0;
@@ -140,228 +130,6 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
                 continue;
             }
         }
-
-        dpu_sync->conn_buf  = ucc_malloc(sizeof(ucc_tl_dpu_conn_buf_t),
-                            "Allocate connection buffer");
-        memset(dpu_sync->conn_buf, 0, sizeof(ucc_tl_dpu_conn_buf_t));
-        dpu_sync->conn_buf->mmap_params.field_mask =
-                                    UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
-                                    UCP_MEM_MAP_PARAM_FIELD_LENGTH;
-        dpu_sync->conn_buf->mmap_params.address = (void*)&dpu_connect->get_sync;
-        dpu_sync->conn_buf->mmap_params.length = sizeof(ucc_tl_dpu_get_sync_t);
-
-        ucc_status = ucs_status_to_ucc_status(
-                ucp_mem_map(dpu_connect->ucp_context, &dpu_sync->conn_buf->mmap_params,
-                            &dpu_sync->get_sync_memh));
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-
-        ucc_status = ucs_status_to_ucc_status(
-            ucp_rkey_pack(dpu_connect->ucp_context, dpu_sync->get_sync_memh,
-                          &dpu_sync->conn_buf->get_sync_rkey_buf,
-                          &dpu_sync->conn_buf->get_sync_rkey_buf_size));
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-
-        dpu_sync->rem_data_in = ucc_calloc(1, sizeof(uint64_t));
-        dpu_sync->rem_data_out = ucc_calloc(1, sizeof(uint64_t));
-
-        dpu_sync->send_req[0] = ucp_tag_send_nbx(dpu_connect->ucp_ep,
-                                        &dpu_sync->conn_buf->mmap_params.address,
-                                        sizeof(uint64_t),
-                                        UCC_TL_DPU_EXCHANGE_ADDR_TAG,
-                                        &req_param);
-        ucc_status = ucc_tl_dpu_req_check(self, dpu_sync->send_req[0]);
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-
-        dpu_sync->send_req[1] = ucp_tag_send_nbx(dpu_connect->ucp_ep,
-                                        &dpu_sync->conn_buf->get_sync_rkey_buf_size,
-                                        sizeof(size_t),
-                                        UCC_TL_DPU_EXCHANGE_LENGTH_TAG,
-                                        &req_param);
-        ucc_status = ucc_tl_dpu_req_check(self, dpu_sync->send_req[1]);
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-
-        dpu_sync->send_req[2] = ucp_tag_send_nbx(dpu_connect->ucp_ep,
-                                        dpu_sync->conn_buf->get_sync_rkey_buf,
-                                        dpu_sync->conn_buf->get_sync_rkey_buf_size,
-                                        UCC_TL_DPU_EXCHANGE_RKEY_TAG,
-                                        &req_param);
-        ucc_status = ucc_tl_dpu_req_check(self, dpu_sync->send_req[2]);
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-
-        dpu_sync->recv_req[0] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
-                                    dpu_sync->conn_buf->rem_rkeys_lengths,
-                                    sizeof(dpu_sync->conn_buf->rem_rkeys_lengths),
-                                    UCC_TL_DPU_EXCHANGE_LENGTH_TAG, (uint64_t)-1,
-                                    &req_param);
-        ucc_status = ucc_tl_dpu_req_check(self, dpu_sync->recv_req[0]);
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-    }
-
-    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
-
-        dpu_sync = &self->dpu_sync_list[rail];
-        dpu_connect = &ctx->dpu_ctx_list[rail];
-
-        for (i = 0; i < tc_poll; i++) {
-            ucp_worker_progress(dpu_connect->ucp_worker);
-            if ((ucc_tl_dpu_req_test(&(dpu_sync->send_req[0]),
-                            dpu_connect->ucp_worker) == UCC_OK) &&
-                (ucc_tl_dpu_req_test(&(dpu_sync->send_req[1]),
-                                     dpu_connect->ucp_worker) == UCC_OK) &&
-                (ucc_tl_dpu_req_test(&(dpu_sync->send_req[2]),
-                                     dpu_connect->ucp_worker) == UCC_OK) &&
-                (ucc_tl_dpu_req_test(&(dpu_sync->recv_req[0]),
-                                     dpu_connect->ucp_worker) == UCC_OK))
-            {
-                dpu_sync->status = UCC_INPROGRESS; /* Advance connection establishment */
-                ucp_rkey_buffer_release(dpu_sync->conn_buf->get_sync_rkey_buf);
-                dpu_sync->conn_buf->get_sync_rkey_buf = NULL;
-
-                total_rkey_size     = dpu_sync->conn_buf->rem_rkeys_lengths[0] +
-                                      dpu_sync->conn_buf->rem_rkeys_lengths[1] +
-                                      dpu_sync->conn_buf->rem_rkeys_lengths[2];
-                dpu_sync->conn_buf->rem_rkeys = ucc_malloc(total_rkey_size, "rem_rkeys alloc");
-                dpu_sync->recv_req[1]   = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
-                                                &dpu_sync->conn_buf->rem_addresses,
-                                                sizeof(dpu_sync->conn_buf->rem_addresses),
-                                                UCC_TL_DPU_EXCHANGE_ADDR_TAG, (uint64_t)-1,
-                                                &req_param);
-                if (ucc_tl_dpu_req_check(self, dpu_sync->recv_req[1]) != UCC_OK) {
-                    goto err;
-                }
-
-                dpu_sync->recv_req[2] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
-                        dpu_sync->conn_buf->rem_rkeys, total_rkey_size,
-                        UCC_TL_DPU_EXCHANGE_RKEY_TAG, (uint64_t)-1, &req_param);
-                if (ucc_tl_dpu_req_check(self, dpu_sync->recv_req[2]) != UCC_OK) {
-                    goto err;
-                }
-                break;
-            }
-        }
-
-        if (UCC_INPROGRESS != dpu_sync->status) {
-            status = UCC_OK;
-        } 
-    }
-    if (status == UCC_OK) {
-        return status;
-    }
-
-    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
-
-        dpu_sync = &self->dpu_sync_list[rail];
-        dpu_connect = &ctx->dpu_ctx_list[rail];
-
-        for (i = 0; i < tc_poll; i++) {
-            ucp_worker_progress(dpu_connect->ucp_worker);
-            if ((ucc_tl_dpu_req_test(&dpu_sync->recv_req[1], dpu_connect->ucp_worker) == UCC_OK) &&
-                (ucc_tl_dpu_req_test(&dpu_sync->recv_req[2], dpu_connect->ucp_worker) == UCC_OK))
-            {
-                dpu_sync->status = UCC_OK;
-                break;
-            }
-        }
-
-        if (UCC_OK != dpu_sync->status) {
-            status = UCC_OK;
-        }
-    }
-
-    if (status == UCC_OK) {
-        return status;
-    }
-
-    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
-
-        dpu_sync = &self->dpu_sync_list[rail];
-        dpu_connect = &ctx->dpu_ctx_list[rail];
-
-        dpu_sync->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
-        ucc_status = ucs_status_to_ucc_status(
-            ucp_ep_rkey_unpack(dpu_connect->ucp_ep, dpu_sync->conn_buf->rem_rkeys,
-                                &dpu_sync->rem_ctrl_seg_key));
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-
-        dpu_sync->rem_data_in[0] = dpu_sync->conn_buf->rem_addresses[1];
-        ucc_status = ucs_status_to_ucc_status(
-            ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
-                        (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
-                        dpu_sync->conn_buf->rem_rkeys_lengths[0]),
-                        &dpu_sync->rem_data_in_key));
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-
-        dpu_sync->rem_data_out[0] = dpu_sync->conn_buf->rem_addresses[2];
-        ucc_status = ucs_status_to_ucc_status(
-            ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
-                                (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
-                                dpu_sync->conn_buf->rem_rkeys_lengths[1] +
-                                dpu_sync->conn_buf->rem_rkeys_lengths[0]),
-                           &dpu_sync->rem_data_out_key));
-        if (UCC_OK != ucc_status) {
-            goto err;
-        }
-
-        ucc_free(dpu_sync->conn_buf->rem_rkeys);
-        dpu_sync->conn_buf->rem_rkeys = NULL;
-        ucc_free(dpu_sync->conn_buf);
-
-
-        for (i=0; i<3; i++) {
-            if (dpu_sync->send_req[i]) {
-                ucp_request_free(dpu_sync->send_req[i]);
-            }
-            if (dpu_sync->recv_req[i]) {
-                ucp_request_free(dpu_sync->recv_req[i]);
-            }
-        }
-
-        if (dpu_sync->status == UCC_OK) {
-            dpu_connect->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
-            dpu_connect->rem_ctrl_seg_key = dpu_sync->rem_ctrl_seg_key; 
-        }
-    }
-
-
-    /* Make sure all the DPUs are done */
-    self->status = UCC_OK;
-    for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
-        if (self->dpu_sync_list[rail].status != UCC_OK) {
-            self->status = self->dpu_sync_list[rail].status;
-            if (self->dpu_sync_list[rail].status == UCC_OPERATION_INITIALIZED) {
-                break;
-            } 
-        }
-    }
-
-    return self->status;
-err:
-    for (i = 0; i <= rail; i++) {
-        if (rail == self->dpu_per_node_cnt) break;
-        if (self->dpu_sync_list[i].conn_buf->rem_rkeys) {
-            ucc_free(self->dpu_sync_list[i].conn_buf->rem_rkeys);
-        }
-        if (self->dpu_sync_list[i].conn_buf->get_sync_rkey_buf) {
-            ucp_rkey_buffer_release(self->dpu_sync_list[i].conn_buf->get_sync_rkey_buf);
-            self->dpu_sync_list[i].conn_buf->get_sync_rkey_buf = NULL;
-        }
-        ucc_free(self->dpu_sync_list[i].conn_buf);
     }
 
     return ucc_status;
@@ -430,6 +198,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
             fprintf(stderr, "destroyed a subcomm dpu team with  team_id=%d \n",
                     team_id);
         } else {
+            #if 0
             /* It is destroying the world team */
             ucp_rkey_destroy(dpu_sync->rem_ctrl_seg_key);
             ucp_rkey_destroy(dpu_sync->rem_data_in_key);
@@ -438,6 +207,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
 
             ucc_free(dpu_sync->rem_data_in);
             ucc_free(dpu_sync->rem_data_out);
+            #endif
         }
 
         dpu_connect->coll_id_completed++;
@@ -456,214 +226,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
 
 ucc_status_t ucc_tl_dpu_team_create_test(ucc_base_team_t *tl_team)
 {
-    ucc_tl_dpu_team_t       *team = ucc_derived_of(tl_team, ucc_tl_dpu_team_t);
-    ucc_tl_dpu_context_t    *ctx = UCC_TL_DPU_TEAM_CTX(team);
-    ucc_status_t            ucc_status = UCC_OK, status = UCC_OK;
-    int                     tc_poll = UCC_TL_DPU_TC_POLL, i = 0, rail;
-    size_t                  total_rkey_size;
-    ucp_request_param_t     req_param = {0};
-    ucc_tl_dpu_sync_t       *dpu_sync = NULL;
-    ucc_tl_dpu_connect_t    *dpu_connect = NULL;
-    int initial_dpu_sync_status[MAX_DPU_COUNT] = {[0 ... (MAX_DPU_COUNT - 1)] =
-        UCC_OPERATION_INITIALIZED};
-
-    if (UCC_OK == team->status) {
-        return UCC_OK;
-    }
-
-    for (rail = 0; rail < team->dpu_per_node_cnt; rail++) {
-
-        dpu_sync = &team->dpu_sync_list[rail];
-        dpu_connect = &ctx->dpu_ctx_list[rail];
-
-        if (UCC_OK == dpu_sync->status) {
-            initial_dpu_sync_status[rail] = UCC_OK;
-            continue;
-        }
-
-        if (UCC_OPERATION_INITIALIZED == dpu_sync->status) {
-            for (i = 0; i < tc_poll; i++) {
-                ucp_worker_progress(dpu_connect->ucp_worker);
-                if ((ucc_tl_dpu_req_test(&dpu_sync->send_req[0],
-                                dpu_connect->ucp_worker) == UCC_OK) &&
-                    (ucc_tl_dpu_req_test(&dpu_sync->send_req[1],
-                                         dpu_connect->ucp_worker) == UCC_OK) &&
-                    (ucc_tl_dpu_req_test(&dpu_sync->send_req[2],
-                                         dpu_connect->ucp_worker) == UCC_OK) &&
-                    (ucc_tl_dpu_req_test(&dpu_sync->recv_req[0],
-                                         dpu_connect->ucp_worker) == UCC_OK))
-                {
-                    dpu_sync->status = UCC_INPROGRESS; /* Advance connection establishment */
-                    break;
-                }
-            }
-
-            if (UCC_INPROGRESS != dpu_sync->status) {
-                status = UCC_INPROGRESS;
-                continue;
-            }
-
-            /* Continue connection establishment */
-            ucp_rkey_buffer_release(dpu_sync->conn_buf->get_sync_rkey_buf);
-            dpu_sync->conn_buf->get_sync_rkey_buf = NULL;
-
-            total_rkey_size = dpu_sync->conn_buf->rem_rkeys_lengths[0] +
-                              dpu_sync->conn_buf->rem_rkeys_lengths[1] +
-                              dpu_sync->conn_buf->rem_rkeys_lengths[2];
-            dpu_sync->conn_buf->rem_rkeys = ucc_malloc(total_rkey_size, "rem_rkeys alloc");
-
-            dpu_sync->recv_req[1] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
-                                &dpu_sync->conn_buf->rem_addresses,
-                                sizeof(dpu_sync->conn_buf->rem_addresses),
-                                UCC_TL_DPU_EXCHANGE_ADDR_TAG, (uint64_t)-1,
-                                &req_param);
-            if (ucc_tl_dpu_req_check(team, dpu_sync->recv_req[0]) != UCC_OK) {
-                goto err;
-            }
-
-            dpu_sync->recv_req[2] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
-                                dpu_sync->conn_buf->rem_rkeys,
-                                total_rkey_size,
-                                UCC_TL_DPU_EXCHANGE_RKEY_TAG, (uint64_t)-1,
-                                &req_param);
-            if (ucc_tl_dpu_req_check(team, dpu_sync->recv_req[1]) != UCC_OK) {
-                goto err;
-            }
-
-
-        } else {
-            assert(dpu_sync->status == UCC_INPROGRESS);
-            assert(dpu_sync->conn_buf->rem_rkeys != NULL);
-        }
-    }
-
-    if (status == UCC_INPROGRESS) {
-        return status;
-    }
-
-    for (rail = 0; rail < team->dpu_per_node_cnt; rail++) {
-
-        if (initial_dpu_sync_status[rail] == UCC_OK) {
-            /* team create for this dpu is completed already */
-            continue;
-        }
-
-        dpu_sync = &team->dpu_sync_list[rail];
-        dpu_connect = &ctx->dpu_ctx_list[rail];
-
-        if (UCC_INPROGRESS == dpu_sync->status) {
-            for (i = 0; i < tc_poll; i++) {
-                ucp_worker_progress(dpu_connect->ucp_worker);
-                if ((ucc_tl_dpu_req_test(&dpu_sync->recv_req[1], dpu_connect->ucp_worker) == UCC_OK) &&
-                    (ucc_tl_dpu_req_test(&dpu_sync->recv_req[2], dpu_connect->ucp_worker) == UCC_OK))
-                {
-                    dpu_sync->status = UCC_OK;
-
-                    dpu_sync->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
-                    ucc_status = ucs_status_to_ucc_status(
-                        ucp_ep_rkey_unpack(dpu_connect->ucp_ep, dpu_sync->conn_buf->rem_rkeys,
-                                            &dpu_sync->rem_ctrl_seg_key));
-                    if (UCC_OK != ucc_status) {
-                        goto err;
-                    }
-                    dpu_sync->rem_data_in[0] = dpu_sync->conn_buf->rem_addresses[1];
-
-                    ucc_status = ucs_status_to_ucc_status(
-                        ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
-                                    (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
-                                    dpu_sync->conn_buf->rem_rkeys_lengths[0]),
-                                    &dpu_sync->rem_data_in_key));
-                    if (UCC_OK != ucc_status) {
-                        goto err;
-                    }
-                    dpu_sync->rem_data_out[0] = dpu_sync->conn_buf->rem_addresses[2];
-
-                    ucc_status = ucs_status_to_ucc_status(
-                        ucp_ep_rkey_unpack(dpu_connect->ucp_ep,
-                                            (void*)((ptrdiff_t)dpu_sync->conn_buf->rem_rkeys +
-                                            dpu_sync->conn_buf->rem_rkeys_lengths[1] +
-                                            dpu_sync->conn_buf->rem_rkeys_lengths[0]),
-                                       &dpu_sync->rem_data_out_key));
-                    if (UCC_OK != ucc_status) {
-                        goto err;
-                    }
-
-                    ucc_free(dpu_sync->conn_buf->rem_rkeys);
-                    dpu_sync->conn_buf->rem_rkeys = NULL;
-                    ucc_free(dpu_sync->conn_buf);
-
-                    for (i=0; i<3; i++) {
-                        if (dpu_sync->send_req[i]) {
-                            ucp_request_free(dpu_sync->send_req[i]);
-                        }
-                        if (dpu_sync->recv_req[i]) {
-                            ucp_request_free(dpu_sync->recv_req[i]);
-                        }
-                    }
-
-                    if (dpu_sync->status == UCC_OK) {
-                        dpu_connect->rem_ctrl_seg = dpu_sync->conn_buf->rem_addresses[0];
-                        dpu_connect->rem_ctrl_seg_key = dpu_sync->rem_ctrl_seg_key; 
-                    }
-
-                    break;
-                }
-            }
-            if (UCC_OK != dpu_sync->status) {
-                status = UCC_INPROGRESS;
-                continue;
-            }
-        }
-    }
-
-    if (status == UCC_INPROGRESS) {
-        return status;
-    }
-
-    /* Make sure all the DPUs are done */
-    team->status = UCC_OK;
-    for (rail = 0; rail < team->dpu_per_node_cnt; rail++) {
-        if (team->dpu_sync_list[rail].status != UCC_OK) {
-            team->status = team->dpu_sync_list[rail].status;
-            if (team->dpu_sync_list[rail].status == UCC_OPERATION_INITIALIZED) {
-                break;
-            } 
-        }
-    }
-
-    if (team->status == UCC_OK) {
-        for (rail = 0; rail < team->dpu_per_node_cnt; rail++) {
-            dpu_sync = &team->dpu_sync_list[rail];
-            dpu_connect = &ctx->dpu_ctx_list[rail];
-#if 0
-            assert(dpu_sync->conn_buf->rem_rkeys != 0);
-            assert(dpu_sync->conn_buf->rem_addresses != 0);
-            assert(dpu_sync->rem_ctrl_seg_key != 0);
-            assert(dpu_sync->rem_ctrl_seg != 0);
-            assert(dpu_sync->rem_data_in_key != 0);
-            assert(dpu_sync->rem_data_out_key != 0);
-            assert(dpu_connect->rem_ctrl_seg != 0);
-            assert(dpu_connect->rem_ctrl_seg_key != 0);
-#endif
-
-        }
-    }
-
-    return team->status;
-err:
-
-    for (i = 0; i <= rail; i++) {
-        if (rail == team->dpu_per_node_cnt) break;
-        if (team->dpu_sync_list[i].conn_buf->rem_rkeys) {
-            ucc_free(team->dpu_sync_list[i].conn_buf->rem_rkeys);
-        }
-        if (team->dpu_sync_list[i].conn_buf->get_sync_rkey_buf) {
-            ucp_rkey_buffer_release(team->dpu_sync_list[i].conn_buf->get_sync_rkey_buf);
-            team->dpu_sync_list[i].conn_buf->get_sync_rkey_buf = NULL;
-        }
-        ucc_free(team->dpu_sync_list[i].conn_buf);
-    }
-    return ucc_status;
+    return UCC_OK;
 }
 
 ucc_status_t ucc_tl_dpu_team_get_scores(ucc_base_team_t   *tl_team,

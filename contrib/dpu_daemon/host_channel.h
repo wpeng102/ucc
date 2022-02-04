@@ -183,7 +183,6 @@ typedef struct dpu_hc_t {
     uint64_t sync_addr;
     ucp_rkey_h src_rkey;
     ucp_rkey_h dst_rkey;
-    ucp_rkey_h sync_rkey;
 
     /* pipeline buffer */
     dpu_pipeline_t  pipeline;
