@@ -93,13 +93,10 @@ UCC_CLASS_DECLARE(ucc_tl_dpu_context_t, const ucc_base_context_params_t *,
 typedef struct ucc_tl_dpu_rkeys_t {
     char src_rkey[MAX_RKEY_LEN];
     char dst_rkey[MAX_RKEY_LEN];
-    char rank_list_rkey[MAX_RKEY_LEN];
     size_t src_rkey_len;
     size_t dst_rkey_len;
-    size_t rank_list_rkey_len;
     void *src_buf;
     void *dst_buf;
-    void *rank_list;
 } ucc_tl_dpu_put_rkeys_t;
 
 typedef struct buf_info_v_t {
@@ -113,21 +110,14 @@ typedef struct ucc_tl_dpu_put_sync_t {
     uint16_t                 rail;
     uint16_t                 dpu_per_node_cnt;
     uint16_t                 create_new_team;
+    uint16_t                 num_ranks;
+    ucc_rank_t               rank_list[MAX_NUM_RANKS];
     ucc_coll_args_t          coll_args;
     buf_info_v_t             src_v;
     buf_info_v_t             dst_v;
     uint32_t                 count_total;
     uint32_t                 coll_id;
 } ucc_tl_dpu_put_sync_t;
-
-typedef struct ucc_tl_dpu_connect_s {
-    ucp_mem_map_params_t    mmap_params;
-    void                    *get_sync_rkey_buf;
-    size_t                  get_sync_rkey_buf_size;
-    size_t                  rem_rkeys_lengths[3];
-    void                    *rem_rkeys;
-    uint64_t                rem_addresses[3];
-} ucc_tl_dpu_conn_buf_t;
 
 typedef struct ucc_tl_dpu_rkey_t {
     ucp_mem_h memh;
@@ -138,18 +128,6 @@ typedef struct ucc_tl_dpu_rkey_t {
 typedef struct ucc_tl_dpu_sync {
     uint32_t              coll_id_issued;
     uint32_t              coll_id_completed;
-    ucc_tl_dpu_get_sync_t get_sync;
-    ucp_mem_h             get_sync_memh;
-    ucc_tl_dpu_rkey_t     ctx_rank_rkey;
-    uint64_t              rem_ctrl_seg;
-    ucp_rkey_h            rem_ctrl_seg_key;
-    uint64_t              *rem_data_in;
-    ucp_rkey_h            rem_data_in_key;
-    uint64_t              *rem_data_out;
-    ucp_rkey_h            rem_data_out_key;
-    ucs_status_ptr_t      send_req[3];
-    ucs_status_ptr_t      recv_req[3];
-    ucc_tl_dpu_conn_buf_t *conn_buf;
     ucc_status_t          status;
 } ucc_tl_dpu_sync_t;
 

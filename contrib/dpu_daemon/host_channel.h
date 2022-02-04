@@ -62,13 +62,10 @@ extern size_t dpu_ucc_dt_sizes[UCC_DT_USERDEFINED];
 typedef struct host_rkey_t {
     char    src_rkey_buf[MAX_RKEY_LEN];
     char    dst_rkey_buf[MAX_RKEY_LEN];
-    char    rank_list_rkey[MAX_RKEY_LEN];
     size_t  src_rkey_len;
     size_t  dst_rkey_len;
-    size_t  rank_list_rkey_len;
     void   *src_buf;
     void   *dst_buf;
-    void   *rank_list;
 } host_rkey_t;
 
 typedef struct buf_info_v_t {
@@ -84,6 +81,8 @@ typedef struct dpu_put_sync_t {
     uint16_t            rail;
     uint16_t            dpu_per_node_cnt;
     uint16_t            create_new_team;
+    uint16_t            num_ranks;
+    ucc_rank_t          rank_list[MAX_NUM_RANKS];
     ucc_coll_args_t     coll_args;
     buf_info_v_t        src_v;
     buf_info_v_t        dst_v;

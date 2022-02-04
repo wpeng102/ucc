@@ -394,6 +394,81 @@ void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     dpu_hc_reply(ctx->hc, &ctx->coll_sync);
 }
 
+static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
+{
+    CTX_LOG("received team_mirroring_signal with comm_thread_ctx->coll_sync.coll_id = %d \n",
+            ctx->coll_sync.coll_id);
+
+    /* Step 1: read in the rank list in comm world */
+    int i =0;
+    int team_id = lsync->team_id;
+    ucc_rank_t team_size = lsync->num_ranks;
+    ucc_rank_t *rank_list = lsync->rank_list;
+    ucc_rank_t full_size = ctx->comm.g->size;
+    ucc_team_h new_team = NULL;
+    ucc_team_params_t team_params = {0};
+    ucc_status_t status;
+    
+    CTX_LOG("got the rank list from host, new team size: %d\n", team_size);
+
+    /* Now we have the rank list in comm world available  */
+    team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
+    team_params.mask     = UCC_TEAM_PARAM_FIELD_EP |
+                           UCC_TEAM_PARAM_FIELD_EP_RANGE |
+                           UCC_TEAM_PARAM_FIELD_EP_MAP;
+
+    /*  find my new rank in the new team */
+    for(i = 0; i < team_size; i++) {
+        if (rank_list[i] == ctx->comm.g->rank) {
+            break;
+        }
+    }
+    team_params.ep = i; 
+    team_params.ep_map = ucc_ep_map_from_array(&rank_list, team_size, full_size, 0);
+
+    status = ucc_team_create_post(&ctx->comm.ctx, 1, &team_params, &new_team);
+    if (UCC_OK != status) {
+        fprintf(stderr, "ucc_team_create_post failed with %d\n", status);
+        return;
+    }
+
+    do {
+        status = ucc_team_create_test(new_team);
+        ucc_context_progress(ctx->comm.ctx);
+    } while (UCC_INPROGRESS == status);
+        
+    if (UCC_OK != status) {
+        fprintf(stderr, "ucc_team_create_test failed with %d\n", status);
+        return;
+    }
+
+    /* a new team has been created, insert it into the thread context */
+    ctx->comm.team_pool[lsync->team_id] = new_team; 
+    CTX_LOG("created new team with team\n" );
+}
+
+static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
+{
+    int team_id = lsync->team_id;
+    ucc_team_h new_team = ctx->comm.team_pool[team_id]; 
+    ucc_status_t status;
+
+    CTX_LOG("received team_releasing_signal with "
+        "comm_thread_ctx->coll_sync.coll_id = %d and team_id = %d\n",
+        ctx->coll_sync.coll_id, team_id);
+
+    do {
+        status = ucc_team_destroy(new_team);
+        if (status < 0) {
+            fprintf(stderr, "ucc_team_destroy failed with %d\n", status);
+            return;
+        }
+    } while (status != UCC_OK);
+
+    ctx->comm.team_pool[team_id] = NULL; 
+    CTX_LOG("destroyed team with team_id = %d \n", team_id);
+}
+
 void dpu_comm_worker(void *arg)
 {
     thread_ctx_t    *tctx_pool = (thread_ctx_t *)arg;
@@ -445,113 +520,8 @@ void dpu_comm_worker(void *arg)
 
         if (coll_type == UCC_COLL_TYPE_LAST) {
             if (create_team == 1) {
-                /* signal is new comm create 
-                 * mirror host team in dpu world */
 
-                CTX_LOG("received team_mirroring_signal with comm_thread_ctx->coll_sync.coll_id = %d \n",
-                        comm_thread_ctx->coll_sync.coll_id);
-                
-                /* 
-                 *
-                 * Steps: 
-                 *
-                 * 1. read the rank list in comm world 
-                 * 2. create a new team in the dpu world 
-                 * for each thread separately
-                 *
-                 */
-
-                /* Step 1 */
-
-                int i = 0;
-                thread_ctx_t *ctx = &(tctx_pool[0]);
-                dpu_put_sync_t * team_mirroring_signal = lsync;
-                ucs_status_ptr_t status_ptr;
-                ucc_team_h new_team = NULL;
-                ucc_rank_t * rank_list =
-                        calloc(team_mirroring_signal->rkeys.rank_list_rkey_len, 1); 
-                ucp_request_param_t req_param = {0}; 
-
-                ucp_rkey_h rkey;
-                ucs_status_t rstatus;
-
-                rstatus = ucp_ep_rkey_unpack(ctx->hc->localhost_ep,
-                        (void*)team_mirroring_signal->rkeys.rank_list_rkey,
-                        &rkey);
-
-                if (rstatus != UCS_OK) {
-                    printf("ucp_ep_rkey_unpack failed: %d", rstatus);
-                    return;
-                }
-
-
-                status_ptr = ucp_get_nbx(ctx->hc->localhost_ep, rank_list,
-                        team_mirroring_signal->rkeys.rank_list_rkey_len,
-                        (uintptr_t)((uint64_t*)team_mirroring_signal->rkeys.rank_list),
-                        rkey,
-                        &req_param);
-
-                _dpu_request_wait(ctx->hc->ucp_worker, status_ptr);
-
-                if (status_ptr != NULL ) {
-                    ucp_request_free(status_ptr);
-                }
-                ucp_rkey_destroy(rkey);
-                
-                CTX_LOG("got the rank list from host \n");
-
-                /* Now we have the rank list in comm world available  */
-
-                ucc_rank_t team_size =
-                    team_mirroring_signal->rkeys.rank_list_rkey_len/sizeof(ucc_rank_t);
-
-                ucc_rank_t full_size = ctx->comm.g->size;
-                ucc_team_params_t      team_params;
-
-                team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
-                team_params.mask     = UCC_TEAM_PARAM_FIELD_EP |
-                                       UCC_TEAM_PARAM_FIELD_EP_RANGE |
-                                       UCC_TEAM_PARAM_FIELD_EP_MAP;
-
-                /*  find my new rank in the new team */
-                for( i = 0; i < team_size; i++) {
-                    if (rank_list[i] == ctx->comm.g->rank)
-                      break;
-                 }
-                team_params.ep = i; 
-
-                team_params.ep_map   = ucc_ep_map_from_array(&rank_list,
-                        team_size, full_size, 0);
-
-                for (i = 0; i <= nthreads; i++) {
-                    /* Step 2 */
-                    ctx = &(tctx_pool[i]);
-                    new_team = NULL;
-
-                    if (UCC_OK != ucc_team_create_post(&ctx->comm.ctx, 1,
-                                                       &team_params, &new_team)) {
-                        /* TODO handle errors */
-                        printf("ucc_team_create_post failed \n");
-                        return;
-                    }
-
-                    while (UCC_INPROGRESS == (status = ucc_team_create_test(
-                                    new_team))) {
-                        ucc_context_progress(ctx->comm.ctx);
-                    }
-
-                    if (UCC_OK != status) {
-                        /* TODO handle errors */
-                        printf("ucc_team_create_test failed");
-                        return;
-                    }
-
-                    /* a new team has been created, insert it into the thread context */
-                    ctx->comm.team_pool[team_id] = new_team; 
-                }
-                
-                CTX_LOG("created all the new teams  \n" );
-
+                dpu_create_comm_team(comm_thread_ctx, lsync);
                 continue;
 
             } else if (team_id == 1) {
@@ -566,43 +536,7 @@ void dpu_comm_worker(void *arg)
                 /* releasing a subcomm's team that was already created
                  * on the dpu world */
 
-                CTX_LOG("received team_releasing_signal with "
-                        "comm_thread_ctx->coll_sync.coll_id = %d and team_id ="
-                        " %d \n",
-                        comm_thread_ctx->coll_sync.coll_id, team_id);
-
-                /*
-                 * 1. make sure this team is not in use
-                 * 2. free it and put NULL in the teams pool
-                 *
-                 */
-
-                int i = 0;
-                thread_ctx_t *ctx   = NULL;
-                ucc_team_h new_team = NULL;
-                ucc_status_t status = UCC_OK;
-
-                for (i = 0; i <= nthreads; i++) {
-
-                    ctx = &(tctx_pool[i]);
-                    new_team = ctx->comm.team_pool[team_id]; 
-
-                    status = UCC_INPROGRESS;
-                    
-                    do {
-                        status = ucc_team_destroy(new_team);
-                        if (status < 0) {
-                            fprintf(stderr, "ucc_team_destroy failed for thread ctx %d\n",
-                                    i);
-                            return;
-                        }
-                    } while (status != UCC_OK);
-
-                    ctx->comm.team_pool[team_id] = NULL; 
-                }
-
-                CTX_LOG("destroyed all teams with  team_id = %d \n", team_id);
-
+                dpu_destroy_comm_team(comm_thread_ctx, lsync);
                 continue;
             }
         }
