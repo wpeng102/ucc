@@ -716,7 +716,7 @@ ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, thread_ctx_t *ctx, dpu_stage_t
     DPU_LOG("## B4 REDUCE ACC DATA %ld %ld GET DATA %ld %ld\n", buf1[0], buf1[1], buf2[0], buf2[1]);
 
     DPU_LOG("Issue AR accbuf %p getbuf %p count %lu\n", accbuf->buf, getbuf->buf, accbuf->count);
-    dpu_signal_comp_threads(ctx, thread_sub_sync);
+    dpu_signal_comp_thread(ctx, thread_sub_sync);
 
     return UCS_OK;
 }
@@ -725,7 +725,7 @@ ucs_status_t dpu_hc_issue_hangup(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_
 {
     thread_sub_sync->accbuf = NULL;
     thread_sub_sync->getbuf = NULL;
-    dpu_signal_comp_threads(ctx, thread_sub_sync);
+    dpu_signal_comp_thread(ctx, thread_sub_sync);
     return UCS_OK;
 }
 
@@ -735,10 +735,8 @@ ucc_status_t dpu_check_comp_status(thread_ctx_t *ctx, thread_sync_t *sync)
     if(!sync->accbuf || !sync->getbuf) {
         return UCC_ERR_INVALID_PARAM;
     }
-    for (i = 0; i < ctx->nthreads; i++) {
-        if (!sync[i].done) {
+    if (!sync->done) {
             return UCC_INPROGRESS;
-        }
     }
     return UCC_OK;
 }

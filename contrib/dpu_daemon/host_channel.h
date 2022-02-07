@@ -213,11 +213,9 @@ int dpu_hc_finalize(dpu_hc_t *dpu_hc);
 typedef struct thread_ctx_t {
     pthread_t       id;
     int             idx;
-    int             nthreads;
     dpu_ucc_comm_t  comm;
     dpu_hc_t        *hc;
-    unsigned int    buf_idx;
-    dpu_get_sync_t  coll_sync;
+    dpu_get_sync_t  *coll_sync;
 } thread_ctx_t;
 
 /* thread accisble data - split reader/writer */
@@ -242,8 +240,8 @@ size_t dpu_ucc_dt_size(ucc_datatype_t dt);
 
 void dpu_waitfor_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync);
 void dpu_signal_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync);
-void dpu_waitfor_comp_threads(thread_ctx_t *ctx, thread_sync_t *sync);
-void dpu_signal_comp_threads(thread_ctx_t *ctx, thread_sync_t *sync);
+void dpu_waitfor_comp_thread(thread_ctx_t *ctx, thread_sync_t *sync);
+void dpu_signal_comp_thread(thread_ctx_t *ctx, thread_sync_t *sync);
 
 ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request);
 
