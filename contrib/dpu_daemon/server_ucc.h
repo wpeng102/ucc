@@ -50,6 +50,9 @@ typedef struct {
     ucc_context_h ctx;
     ucc_team_h team; /* this team always is dpu comm world team */
     ucc_team_h team_pool[DPU_TEAM_POOL_SIZE];
+    ucc_rank_t * team_ctx_ranks[DPU_TEAM_POOL_SIZE]; /* array of lists that
+                                                        maps world rank to team
+                                                        ranks */
 } dpu_ucc_comm_t;
 
 int dpu_ucc_init(int argc, char **argv, dpu_ucc_global_t *g);

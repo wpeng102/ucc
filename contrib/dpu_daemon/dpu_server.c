@@ -434,6 +434,7 @@ static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 
     /* a new team has been created, insert it into the thread context */
     ctx->comm.team_pool[lsync->team_id] = new_team; 
+    ctx->comm.team_ctx_ranks[team_id] = rank_list;
     CTX_LOG("created new team with team\n" );
 }
 
