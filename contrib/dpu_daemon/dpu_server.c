@@ -538,7 +538,7 @@ void dpu_comm_thread(void *arg)
 
             dpu_signal_comp_thread(ctx, thread_main_sync);
             while (hc->pipeline.count_serviced < hc->pipeline.my_count) {
-                dpu_hc_progress(ctx->hc, lsync, ctx);
+                dpu_hc_progress_allreduce(ctx->hc, lsync, ctx);
             }
             dpu_hc_issue_hangup(ctx->hc, lsync, ctx);
 

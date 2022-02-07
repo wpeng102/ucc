@@ -112,12 +112,12 @@ typedef struct dpu_mem_segs_t {
     dpu_mem_t out;
 } dpu_mem_segs_t;
 
-typedef enum dpu_stage_phase_t {
+typedef enum dpu_ar_phase_t {
     WAIT,
     INIT,
     REDUCE,
     BCAST,
-} dpu_stage_phase_t;
+} dpu_ar_phase_t;
 
 typedef enum dpu_buf_state_t {
     FREE,
@@ -137,7 +137,7 @@ typedef struct dpu_stage_t {
     dpu_buf_t accbuf;
     dpu_buf_t getbuf[2];
     
-    volatile dpu_stage_phase_t phase;
+    volatile dpu_ar_phase_t phase;
     volatile int get_idx;
     volatile int red_idx;
     volatile int src_rank;
@@ -233,7 +233,7 @@ extern thread_sync_t *thread_sub_sync;
 ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *getbuf);
 ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *accbuf);
 ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, thread_ctx_t *ctx, dpu_stage_t *stage, dpu_buf_t *accbuf, dpu_buf_t *getbuf);
-ucs_status_t dpu_hc_progress(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 ucs_status_t dpu_hc_issue_hangup(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);

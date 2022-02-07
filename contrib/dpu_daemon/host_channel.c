@@ -741,7 +741,7 @@ ucc_status_t dpu_check_comp_status(thread_ctx_t *ctx, thread_sync_t *sync)
     return UCC_OK;
 }
 
-ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
+ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
                     dpu_put_sync_t *sync,
                     thread_ctx_t *ctx)
 {
@@ -759,125 +759,123 @@ ucs_status_t dpu_hc_progress(dpu_hc_t *hc,
         }
     }
 
-    for (i=0; i<1; i++) {
-        dpu_stage_t *stage = &pp->stages[i];
-        dpu_buf_t *accbuf = &stage->accbuf;
-        dpu_buf_t *getbuf = &stage->getbuf[stage->get_idx];
-        dpu_buf_t *redbuf = &stage->getbuf[stage->red_idx];
+    dpu_stage_t *stage = &pp->stages[0];
+    dpu_buf_t *accbuf = &stage->accbuf;
+    dpu_buf_t *getbuf = &stage->getbuf[stage->get_idx];
+    dpu_buf_t *redbuf = &stage->getbuf[stage->red_idx];
 
-        switch(stage->phase) {
-            case INIT:
-            if (accbuf->state == FREE) {
-                assert(stage->done_get == 0);
-                dpu_hc_issue_get(hc, sync, stage, accbuf);
-            } else if (accbuf->state == SENDRECV && accbuf->count > 0) {
-                request = accbuf->ucp_req;
-                if (_dpu_req_test(request) == UCS_OK) {
-                    if (request) ucp_request_free(request);
-                    accbuf->ucp_req = NULL;
-                    accbuf->state = IDLE;
-                    stage->done_get += 1;
-                    stage->phase = REDUCE;
-                    DPU_LOG("Stage %d Received %ld bytes into accbuf, gets done %d\n",
-                            i, accbuf->count, stage->done_get);
-                }
+    switch(stage->phase) {
+        case INIT:
+        if (accbuf->state == FREE) {
+            assert(stage->done_get == 0);
+            dpu_hc_issue_get(hc, sync, stage, accbuf);
+        } else if (accbuf->state == SENDRECV && accbuf->count > 0) {
+            request = accbuf->ucp_req;
+            if (_dpu_req_test(request) == UCS_OK) {
+                if (request) ucp_request_free(request);
+                accbuf->ucp_req = NULL;
+                accbuf->state = IDLE;
+                stage->done_get += 1;
+                stage->phase = REDUCE;
+                DPU_LOG("Stage %d Received %ld bytes into accbuf, gets done %d\n",
+                        i, accbuf->count, stage->done_get);
             }
-            break;
-            case REDUCE:
-            if (getbuf->state == FREE && stage->done_get < ranks) {
-                assert(stage->done_get > 0);
-                dpu_hc_issue_get(hc, sync, stage, getbuf);
-                // assert(getbuf->ucp_req != NULL);
-            } else if (getbuf->state == SENDRECV && getbuf->count > 0) {
-                request = getbuf->ucp_req;
-                if (_dpu_req_test(request) == UCS_OK) {
-                    if (request) ucp_request_free(request);
-                    getbuf->ucp_req = NULL;
-                    getbuf->state = IDLE;
-                    stage->done_get += 1;
-                    DPU_LOG("Stage %d Received %ld bytes into getbuf[%d], gets done %d\n",
-                            i, getbuf->count, stage->get_idx, stage->done_get);
-
-                    if (stage->done_get == ranks) {
-                        pp->count_received += accbuf->count;
-                        /* Allow next stage to start */
-                        // int other = (i+1) % 2;
-                        // dpu_stage_t *next_stage = &pp->stages[other];
-                        // DPU_LOG("Next stage %d, state %d\n", other, next_stage->phase);
-                        // assert(next_stage->phase == WAIT);
-                        // next_stage->phase = INIT;
-                    }
-                }
-            }
-            if (getbuf->state == IDLE && accbuf->state == IDLE) {
-                assert(stage->done_get > stage->done_red);
-                dpu_hc_issue_allreduce(hc, ctx, stage, accbuf, getbuf);
-                /* Swap Reduce and Get buffers */
-                stage->red_idx = stage->get_idx;
-                stage->get_idx = (stage->get_idx + 1) % 2;
-            }
-            if (redbuf->state == REDUCING && accbuf->state == REDUCING) {
-                /* Check for reduce completion */
-                if (dpu_check_comp_status(ctx, thread_sub_sync) == UCC_OK) {
-                    redbuf->state = FREE;
-                    accbuf->state = IDLE;
-                    stage->done_red += 1;
-                    DPU_LOG("Stage %d reduced %ld bytes from getbuf[%d], reds done %d\n",
-                            i, redbuf->count, stage->red_idx, stage->done_red);
-                    thread_sub_sync->accbuf = thread_sub_sync->getbuf = NULL;
-
-                    if (stage->done_red == ranks-1) {
-                        /* Start broadcast */
-                        stage->phase = BCAST;
-                        pp->count_reduced += accbuf->count;
-                    }
-                }
-            }
-            break;
-            case BCAST:
-            if (accbuf->state == IDLE && accbuf->count > 0) {
-                DPU_LOG("Ranks %d Stage %d done get %d red %d put %d\n", ranks, i, stage->done_get, stage->done_red, stage->done_put);
-                assert(stage->done_get == ranks);
-                assert(stage->done_red == ranks-1);
-                assert(stage->done_put <= ranks);
-                dpu_hc_issue_put(hc, sync, stage, accbuf);
-                // assert(accbuf->ucp_req != NULL);
-            } else if (accbuf->state == SENDRECV && accbuf->count > 0) {
-                request = accbuf->ucp_req;
-                if (_dpu_req_test(request) == UCS_OK) {
-                    if (request) ucp_request_free(request);
-                    accbuf->ucp_req = NULL;
-                    accbuf->state = IDLE;
-                    stage->done_put += 1;
-                    DPU_LOG("Stage %d sent %ld bytes from accbuf, puts done %d\n",
-                            i, accbuf->count, stage->done_put);
-                    
-                    if (stage->done_put == ranks) {
-                        /* Done with this stage */
-                        pp->count_serviced += accbuf->count;
-                        stage->phase = WAIT;
-
-                        /* Reset this stage counters */
-                        _dpu_hc_reset_stage(stage, hc);
-
-                        /* Allow next stage to start */
-                        int next = 0; //(i+1) % 2;
-                        dpu_stage_t *next_stage = &pp->stages[next];
-                        DPU_LOG("Next stage %d, state %d\n", next, next_stage->phase);
-                        assert(next_stage->phase == WAIT);
-                        next_stage->phase = INIT;
-                    }
-                }
-            } else {
-                DPU_LOG("Impossible!! stage %d %p phase %d state %d\n", i, stage, stage->phase, accbuf->state);
-                assert(0);
-            }
-            break;
-            default:
-            break;
         }
+        break;
+        case REDUCE:
+        if (getbuf->state == FREE && stage->done_get < ranks) {
+            assert(stage->done_get > 0);
+            dpu_hc_issue_get(hc, sync, stage, getbuf);
+            // assert(getbuf->ucp_req != NULL);
+        } else if (getbuf->state == SENDRECV && getbuf->count > 0) {
+            request = getbuf->ucp_req;
+            if (_dpu_req_test(request) == UCS_OK) {
+                if (request) ucp_request_free(request);
+                getbuf->ucp_req = NULL;
+                getbuf->state = IDLE;
+                stage->done_get += 1;
+                DPU_LOG("Stage %d Received %ld bytes into getbuf[%d], gets done %d\n",
+                        i, getbuf->count, stage->get_idx, stage->done_get);
 
+                if (stage->done_get == ranks) {
+                    pp->count_received += accbuf->count;
+                    /* Allow next stage to start */
+                    // int other = (i+1) % 2;
+                    // dpu_stage_t *next_stage = &pp->stages[other];
+                    // DPU_LOG("Next stage %d, state %d\n", other, next_stage->phase);
+                    // assert(next_stage->phase == WAIT);
+                    // next_stage->phase = INIT;
+                }
+            }
+        }
+        if (getbuf->state == IDLE && accbuf->state == IDLE) {
+            assert(stage->done_get > stage->done_red);
+            dpu_hc_issue_allreduce(hc, ctx, stage, accbuf, getbuf);
+            /* Swap Reduce and Get buffers */
+            stage->red_idx = stage->get_idx;
+            stage->get_idx = (stage->get_idx + 1) % 2;
+        }
+        if (redbuf->state == REDUCING && accbuf->state == REDUCING) {
+            /* Check for reduce completion */
+            if (dpu_check_comp_status(ctx, thread_sub_sync) == UCC_OK) {
+                redbuf->state = FREE;
+                accbuf->state = IDLE;
+                stage->done_red += 1;
+                DPU_LOG("Stage %d reduced %ld bytes from getbuf[%d], reds done %d\n",
+                        i, redbuf->count, stage->red_idx, stage->done_red);
+                thread_sub_sync->accbuf = thread_sub_sync->getbuf = NULL;
+
+                if (stage->done_red == ranks-1) {
+                    /* Start broadcast */
+                    stage->phase = BCAST;
+                    pp->count_reduced += accbuf->count;
+                }
+            }
+        }
+        break;
+        case BCAST:
+        if (accbuf->state == IDLE && accbuf->count > 0) {
+            DPU_LOG("Ranks %d Stage %d done get %d red %d put %d\n", ranks, i, stage->done_get, stage->done_red, stage->done_put);
+            assert(stage->done_get == ranks);
+            assert(stage->done_red == ranks-1);
+            assert(stage->done_put <= ranks);
+            dpu_hc_issue_put(hc, sync, stage, accbuf);
+            // assert(accbuf->ucp_req != NULL);
+        } else if (accbuf->state == SENDRECV && accbuf->count > 0) {
+            request = accbuf->ucp_req;
+            if (_dpu_req_test(request) == UCS_OK) {
+                if (request) ucp_request_free(request);
+                accbuf->ucp_req = NULL;
+                accbuf->state = IDLE;
+                stage->done_put += 1;
+                DPU_LOG("Stage %d sent %ld bytes from accbuf, puts done %d\n",
+                        i, accbuf->count, stage->done_put);
+                
+                if (stage->done_put == ranks) {
+                    /* Done with this stage */
+                    pp->count_serviced += accbuf->count;
+                    stage->phase = WAIT;
+
+                    /* Reset this stage counters */
+                    _dpu_hc_reset_stage(stage, hc);
+
+                    /* Allow next stage to start */
+                    int next = 0; //(i+1) % 2;
+                    dpu_stage_t *next_stage = &pp->stages[next];
+                    DPU_LOG("Next stage %d, state %d\n", next, next_stage->phase);
+                    assert(next_stage->phase == WAIT);
+                    next_stage->phase = INIT;
+                }
+            }
+        } else {
+            DPU_LOG("Impossible!! stage %d %p phase %d state %d\n", i, stage, stage->phase, accbuf->state);
+            assert(0);
+        }
+        break;
+        default:
+        break;
     }
+
 }
 
 int dpu_hc_finalize(dpu_hc_t *hc)
