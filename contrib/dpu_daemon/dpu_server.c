@@ -17,6 +17,9 @@
 #define CORES 6
 #define MAX_THREADS 128
 
+#define THREAD_IDX_WORKER 0
+#define THREAD_IDX_COMM   1
+
 thread_sync_t syncs[2];
 thread_sync_t *thread_main_sync = &syncs[0];
 thread_sync_t *thread_sub_sync  = &syncs[1];
@@ -73,19 +76,16 @@ ucc_coll_args_get_total_count(const ucc_coll_args_t *args,
 
 static void dpu_thread_set_affinity(thread_ctx_t *ctx)
 {
-    int i;
     int places = 6;
     pthread_t thread = pthread_self();
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
 
-    if (ctx->idx >= 0) {
-        for (i = 0; i < places; i+=1) {
+    if (ctx->idx == THREAD_IDX_WORKER) {
+        for (int i = 0; i < places; i+=1) {
             CPU_SET(i, &cpuset);
         }
-    }
-    else {
-        // CPU_SET(6, &cpuset);
+    } else {
         CPU_SET(7, &cpuset);
     }
 
@@ -95,7 +95,7 @@ static void dpu_thread_set_affinity(thread_ctx_t *ctx)
 static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     /* Only do in comm thread */
-    assert(ctx->idx == 1);
+    assert(ctx->idx == THREAD_IDX_COMM);
 
     ucs_status_t status;
     size_t team_rank, team_size;
@@ -161,7 +161,7 @@ static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_syn
 static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     /* Only do in comm thread */
-    assert(ctx->idx == 1);
+    assert(ctx->idx == THREAD_IDX_COMM);
 
     ucs_status_t status;
     size_t team_rank, team_size;
@@ -246,7 +246,7 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
 static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     /* Only do in comm thread */
-    assert(ctx->idx == 1);
+    assert(ctx->idx == THREAD_IDX_COMM);
     CTX_LOG("Collecting Host rkeys on team id %d\n", lsync->team_id);
 
     int i;
@@ -459,7 +459,7 @@ static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     CTX_LOG("destroyed team with team_id = %d \n", team_id);
 }
 
-void dpu_comm_worker(void *arg)
+void dpu_comm_thread(void *arg)
 {
     thread_ctx_t    *ctx = (thread_ctx_t *)arg;
     dpu_hc_t        *hc = ctx->hc;
@@ -473,7 +473,8 @@ void dpu_comm_worker(void *arg)
 
     dpu_put_sync_t  *lsync = &tmp_sync; //comm_thread_ctx->hc->mem_segs.sync.base;
     ucc_status_t    status;
-    assert(ctx->idx == 1);
+
+    assert(ctx->idx == THREAD_IDX_COMM);
     dpu_thread_set_affinity(ctx);
     CTX_LOG("Started comm thread\n");
 
@@ -590,14 +591,16 @@ void dpu_comm_worker(void *arg)
     }
 }
 
-void *dpu_worker(void *arg)
+void *dpu_worker_thread(void *arg)
 {
     thread_ctx_t *ctx = (thread_ctx_t*)arg;
     dpu_put_sync_t *lsync = &tmp_sync; //ctx->hc->mem_segs.sync.base;
     ucc_coll_req_h request = NULL;
     size_t count_serviced;
 
+    assert(ctx->idx == THREAD_IDX_WORKER);
     dpu_thread_set_affinity(ctx);
+    CTX_LOG("Started worker thread\n");
 
     while(1) {
         ctx->coll_sync->count_serviced = 0;
@@ -655,38 +658,38 @@ void *dpu_worker(void *arg)
 
 int main(int argc, char **argv)
 {
-    int              omp_threads;
-    thread_ctx_t     ctx[2];
-    thread_ctx_t     *worker_ctx = &ctx[0];
-    thread_ctx_t     *comm_ctx   = &ctx[1];
     dpu_ucc_global_t ucc_glob;
     dpu_hc_t         hc;
     dpu_get_sync_t   coll_sync;
 
-    omp_threads = atoi(getenv("UCC_MC_CPU_REDUCE_NUM_THREADS"));
+    int omp_threads = atoi(getenv("UCC_MC_CPU_REDUCE_NUM_THREADS"));
     printf("DPU daemon: Running with %d OpenMP threads\n", omp_threads);
 
     UCC_CHECK(dpu_ucc_init(argc, argv, &ucc_glob));
     UCC_CHECK(dpu_hc_init(&hc));
     UCC_CHECK(dpu_hc_accept(&hc));
 
-    UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &worker_ctx->comm));
-    worker_ctx->idx = 0;
-    worker_ctx->hc  = &hc;
-    worker_ctx->coll_sync = &coll_sync;
-    pthread_create(&worker_ctx->id, NULL, dpu_worker, worker_ctx);
+    thread_ctx_t worker_ctx = {
+        .idx = THREAD_IDX_WORKER,
+        .hc = &hc,
+        .coll_sync = &coll_sync,
+    };
+    UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &worker_ctx.comm));
+    pthread_create(&worker_ctx.id, NULL, dpu_worker_thread, &worker_ctx);
 
-    UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx->comm));
-    comm_ctx->idx = 1;
-    comm_ctx->hc  = &hc;
-    comm_ctx->coll_sync = &coll_sync;
-    pthread_create(&comm_ctx->id, NULL, dpu_comm_worker, comm_ctx);
+    thread_ctx_t comm_ctx = {
+        .idx = THREAD_IDX_COMM,
+        .hc = &hc,
+        .coll_sync = &coll_sync,
+    };
+    UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx.comm));
+    pthread_create(&comm_ctx.id, NULL, dpu_comm_thread, &comm_ctx);
 
-    pthread_join(worker_ctx->id, NULL);
-    pthread_join(comm_ctx->id, NULL);
+    pthread_join(worker_ctx.id, NULL);
+    pthread_join(comm_ctx.id, NULL);
 
-    dpu_ucc_free_team(&ucc_glob, &worker_ctx->comm);
-    dpu_ucc_free_team(&ucc_glob, &comm_ctx->comm);
+    dpu_ucc_free_team(&ucc_glob, &worker_ctx.comm);
+    dpu_ucc_free_team(&ucc_glob, &comm_ctx.comm);
 
     dpu_hc_finalize(&hc);
     dpu_ucc_finalize(&ucc_glob);
