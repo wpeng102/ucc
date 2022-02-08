@@ -577,7 +577,7 @@ err:
     return ret;
 }
 
-int dpu_hc_wait(dpu_hc_t *hc, unsigned int next_coll_id)
+int dpu_hc_wait(dpu_hc_t *hc, uint32_t next_coll_id)
 {
     dpu_put_sync_t *lsync = (dpu_put_sync_t*)hc->mem_segs.sync.base;
     ucp_request_param_t req_param = {0};

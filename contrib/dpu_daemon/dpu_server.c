@@ -464,7 +464,7 @@ void dpu_comm_thread(void *arg)
 {
     thread_ctx_t    *ctx = (thread_ctx_t *)arg;
     dpu_hc_t        *hc = ctx->hc;
-    unsigned int    coll_id;     
+    uint32_t        coll_id;     
     ucc_coll_type_t coll_type; 
     size_t          count_total; 
     uint16_t        team_id; 
@@ -484,7 +484,7 @@ void dpu_comm_thread(void *arg)
         ctx->coll_sync->coll_id++;
         ctx->coll_sync->count_serviced = 0;
 
-        CTX_LOG("Waiting for coll id: %d from host\n", ctx->coll_sync->coll_id);
+        CTX_LOG("Waiting for coll id: %u from host\n", ctx->coll_sync->coll_id);
         dpu_wait_for_next_coll(ctx);
 
         coll_id     = lsync->coll_id;
@@ -606,10 +606,10 @@ void *dpu_worker_thread(void *arg)
     while(1) {
         ctx->coll_sync->count_serviced = 0;
 
-        CTX_LOG("Waiting for coll id: %d from comm thread\n", ctx->coll_sync->coll_id);
+        CTX_LOG("Waiting for coll id: %u from comm thread\n", ctx->coll_sync->coll_id);
         dpu_waitfor_comm_thread(ctx, thread_main_sync);
 
-        unsigned int coll_id      = lsync->coll_id;
+        uint32_t coll_id          = lsync->coll_id;
         size_t count_total        = lsync->count_total;
         ucc_coll_type_t coll_type = lsync->coll_args.coll_type;
         ucc_datatype_t dtype      = lsync->coll_args.src.info.datatype;
@@ -669,6 +669,8 @@ int main(int argc, char **argv)
     UCC_CHECK(dpu_ucc_init(argc, argv, &ucc_glob));
     UCC_CHECK(dpu_hc_init(&hc));
     UCC_CHECK(dpu_hc_accept(&hc));
+
+    memset(&coll_sync, 0, sizeof(coll_sync));
 
     thread_ctx_t worker_ctx = {
         .idx = THREAD_IDX_WORKER,
