@@ -391,28 +391,31 @@ void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 
 static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
-    CTX_LOG("received team_mirroring_signal with thread ctx->idx = %d  and thread ctx->coll_sync->coll_id = %d \n",
+    CTX_LOG("received team_mirroring_signal with thread ctx->idx = %d and"
+            " thread ctx->coll_sync->coll_id = %d \n",
             ctx->idx, ctx->coll_sync->coll_id);
 
-    /* Step 1: read in the rank list in comm world */
+    /* read in the rank list in comm world */
     int i =0;
     int team_id = lsync->team_id;
     ucc_rank_t team_size = lsync->num_ranks;
-    ucc_rank_t *rank_list = lsync->rank_list;
     ucc_rank_t full_size = ctx->comm.g->size;
     ucc_team_h new_team = NULL;
     ucc_team_params_t team_params = {0};
     ucc_status_t status;
-    
+    ucc_rank_t *rank_list = malloc(sizeof(ucc_rank_t) * team_size);
+
+    memcpy(rank_list, lsync->rank_list, sizeof(ucc_rank_t) * team_size);
+
     CTX_LOG("got the rank list from host, new team size: %d\n", team_size);
 
-    /* Now we have the rank list in comm world available  */
+    /* now we have the rank list in comm world available  */
     team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
     team_params.mask     = UCC_TEAM_PARAM_FIELD_EP |
                            UCC_TEAM_PARAM_FIELD_EP_RANGE |
                            UCC_TEAM_PARAM_FIELD_EP_MAP;
 
-    /*  find my new rank in the new team */
+    /* find my new rank in the new team */
     for(i = 0; i < team_size; i++) {
         if (rank_list[i] == ctx->comm.g->rank) {
             break;
@@ -450,6 +453,7 @@ static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     ucc_team_h new_team = ctx->comm.team_pool[team_id]; 
     ucc_status_t status;
 
+
     CTX_LOG("received team_releasing_signal with thread ctx->idx = %d, team_id = %d, and thread ctx->coll_sync->coll_id = %d \n",
             ctx->idx, team_id, ctx->coll_sync->coll_id);
 
@@ -462,6 +466,11 @@ static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     } while (status != UCC_OK);
 
     ctx->comm.team_pool[team_id] = NULL; 
+    if (ctx->comm.team_ctx_ranks[team_id] != NULL) {
+        free(ctx->comm.team_ctx_ranks[team_id]);
+        ctx->comm.team_ctx_ranks[team_id] = NULL;
+    }
+
     CTX_LOG("destroyed team with team_id = %d for thread ctx->id = %d \n", team_id, ctx->idx);
 }
 
