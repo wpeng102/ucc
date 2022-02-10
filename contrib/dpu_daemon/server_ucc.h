@@ -16,6 +16,11 @@
 
 #define STR(x) #x
 
+#define UCS_CHECK(_call) if (UCS_OK != (_call)) {              \
+        fprintf(stderr, "*** UCS TEST FAIL: %s\n", STR(_call)); \
+        MPI_Abort(MPI_COMM_WORLD, -1);                           \
+    }
+
 #define UCC_CHECK(_call) if (UCC_OK != (_call)) {              \
         fprintf(stderr, "*** UCC TEST FAIL: %s\n", STR(_call)); \
         MPI_Abort(MPI_COMM_WORLD, -1);                           \

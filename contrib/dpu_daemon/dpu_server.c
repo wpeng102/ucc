@@ -525,7 +525,7 @@ void dpu_comm_thread(void *arg)
                 dpu_waitfor_comp_thread(ctx, thread_main_sync);
                 continue;
 
-            } else if (team_id == 1) {
+            } else if (team_id == UCC_WORLD_TEAM_ID) {
 
                 /* World team free so Hang up */
                 dpu_signal_comp_thread(ctx, thread_main_sync);
@@ -608,6 +608,8 @@ void dpu_comm_thread(void *arg)
             dpu_coll_free_host_rkeys(ctx, lsync);
         }
     }
+
+    CTX_LOG("Communication thread is finalized \n");
 }
 
 void *dpu_worker_thread(void *arg)
@@ -639,13 +641,13 @@ void *dpu_worker_thread(void *arg)
                 coll_id, coll_type, count_total);
         
         if (coll_type == UCC_COLL_TYPE_LAST) {
-            if (create_team == 1) {
+            if (create_team == UCC_WORLD_TEAM_ID) {
 
                 dpu_create_comm_team(ctx, lsync);
                 dpu_signal_comm_thread(ctx, thread_main_sync);
                 continue;
 
-            } else if (team_id == 1) {
+            } else if (team_id == UCC_WORLD_TEAM_ID) {
 
                 /* World team free so Hang up */
                // dpu_signal_comp_thread(ctx, thread_main_sync);
@@ -695,6 +697,8 @@ void *dpu_worker_thread(void *arg)
                 coll_id, coll_type, count_total, (size_t)ctx->coll_sync->count_serviced);
         dpu_signal_comm_thread(ctx, thread_main_sync);
     }
+
+    CTX_LOG("Worker thread is finalized \n");
     return NULL;
 }
 
@@ -710,6 +714,8 @@ int main(int argc, char **argv)
     UCC_CHECK(dpu_ucc_init(argc, argv, &ucc_glob));
     UCC_CHECK(dpu_hc_init(&hc));
     UCC_CHECK(dpu_hc_accept(&hc));
+
+    printf("Host channel is intialized \n");
 
     memset(&coll_sync, 0, sizeof(coll_sync));
 
@@ -729,6 +735,8 @@ int main(int argc, char **argv)
     UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx.comm));
     pthread_create(&comm_ctx.id, NULL, dpu_comm_thread, &comm_ctx);
 
+    UCS_CHECK(dpu_set_init_completion(&hc));
+
     pthread_join(worker_ctx.id, NULL);
     pthread_join(comm_ctx.id, NULL);
 
@@ -736,6 +744,7 @@ int main(int argc, char **argv)
     dpu_ucc_free_team(&ucc_glob, &comm_ctx.comm);
 
     dpu_hc_finalize(&hc);
+    printf("Host channel is finalized \n");
     dpu_ucc_finalize(&ucc_glob);
     return 0;
 }

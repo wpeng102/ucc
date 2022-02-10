@@ -537,11 +537,13 @@ int dpu_hc_accept(dpu_hc_t *hc)
         goto err;
     }
 
+
     if (ret = _dpu_create_host_eps(hc, rem_worker_addr, rem_worker_addr_len)) {
         fprintf(stderr, "_dpu_create_host_eps failed!\n");
         ret = UCC_ERR_NO_MESSAGE;
         goto err;
     }
+
 
     memset(&hc->pipeline, 0, sizeof(hc->pipeline));
 
@@ -635,7 +637,7 @@ uint64_t dpu_get_ep_rank(dpu_hc_t *hc,  int rank, int team_id, thread_ctx_t *ctx
 
     uint64_t ep_rank, world_rank;
 
-    if (team_id == 1) {
+    if (team_id == UCC_WORLD_TEAM_ID) {
         world_rank = rank;
     } else {
         world_rank = ctx->comm.team_ctx_ranks[team_id][rank];
@@ -900,6 +902,31 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
         break;
     }
 
+}
+
+ucs_status_t dpu_set_init_completion(dpu_hc_t *hc) {
+
+    ucs_status_t status;
+    ucp_tag_t req_tag = 0;
+    ucs_status_ptr_t request;
+
+    dpu_get_sync_t coll_sync;
+    coll_sync.coll_id = -1;
+    coll_sync.count_serviced = -1;
+
+    DPU_LOG("Send initilization completion notice to host\n" );
+    _dpu_worker_flush(hc);
+
+    ucp_worker_fence(hc->ucp_worker);
+    request = ucp_tag_send_nbx(hc->localhost_ep,
+            &coll_sync, sizeof(dpu_get_sync_t), req_tag, &hc->req_param);
+    status = _dpu_request_wait(hc->ucp_worker, request);
+    if (status != UCS_OK) {
+        fprintf(stderr, "failed to notify host of init completion (%s)\n", ucs_status_string(status));
+        return status;
+    }
+
+    return UCS_OK;
 }
 
 int dpu_hc_finalize(dpu_hc_t *hc)

@@ -88,7 +88,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
         dpu_sync->status              = UCC_OPERATION_INITIALIZED;
 
         /*  avoid preparing the get_sync for teams other than world */
-        if (params->id != 1) {
+        if (params->id != UCC_WORLD_TEAM_ID) {
             ucc_status =  ucc_tl_dpu_new_team_create_test(self, rail);
             if (ucc_status != UCC_OK) {
                 return ucc_status;
@@ -98,7 +98,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
             } else {
                 continue;
             }
-        }
+        }   
     }
 
     return ucc_status;
