@@ -251,7 +251,7 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     assert(ctx->idx == THREAD_IDX_COMM);
     CTX_LOG("Collecting Host rkeys on team id %d\n", lsync->team_id);
 
-    int i;
+    int i, ep_rank;
     ucs_status_t status;
     ucc_coll_req_h request;
     dpu_hc_t *hc = ctx->hc;
@@ -294,19 +294,23 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     }
     UCC_CHECK(ucc_collective_finalize(request));
 
+    memset(hc->host_rkeys, 0, sizeof(host_rkey_t) * hc->world_size);
+
     for (i = 0; i < team_size; i++) {
-        memcpy(&hc->host_rkeys[i], &hc->world_lsyncs[i].rkeys, sizeof(host_rkey_t));
-        assert(NULL != hc->host_rkeys[i].src_rkey_buf);
-        assert(NULL != hc->host_rkeys[i].dst_rkey_buf);
-        assert(0    <  hc->host_rkeys[i].src_rkey_len);
-        assert(0    <  hc->host_rkeys[i].dst_rkey_len);
-        status = ucp_ep_rkey_unpack(hc->host_eps[i], (void*)hc->host_rkeys[i].src_rkey_buf, &hc->host_src_rkeys[i]);
+        ep_rank  = dpu_get_ep_rank(hc, i, lsync->team_id, ctx);
+        memcpy(&hc->host_rkeys[ep_rank], &hc->world_lsyncs[i].rkeys, sizeof(host_rkey_t));
+        assert(NULL != hc->host_rkeys[ep_rank].src_rkey_buf);
+        assert(NULL != hc->host_rkeys[ep_rank].dst_rkey_buf);
+        assert(0    <  hc->host_rkeys[ep_rank].src_rkey_len);
+        assert(0    <  hc->host_rkeys[ep_rank].dst_rkey_len);
+        status = ucp_ep_rkey_unpack(hc->host_eps[ep_rank], (void*)hc->host_rkeys[ep_rank].src_rkey_buf, &hc->host_src_rkeys[ep_rank]);
         assert(UCS_OK == status);
-        assert(NULL != hc->host_rkeys[i].src_buf);
-        status = ucp_ep_rkey_unpack(hc->host_eps[i], (void*)hc->host_rkeys[i].dst_rkey_buf, &hc->host_dst_rkeys[i]);
+        assert(NULL != hc->host_rkeys[ep_rank].src_buf);
+        status = ucp_ep_rkey_unpack(hc->host_eps[ep_rank], (void*)hc->host_rkeys[ep_rank].dst_rkey_buf, &hc->host_dst_rkeys[ep_rank]);
         assert(UCS_OK == status);
-        assert(NULL != hc->host_rkeys[i].dst_buf);
-        CTX_LOG("Rank %d src buf %p dst buf %p\n", i, hc->host_rkeys[i].src_buf, hc->host_rkeys[i].dst_buf);
+        assert(NULL != hc->host_rkeys[ep_rank].dst_buf);
+        CTX_LOG("Rank %d with EP Rank %d  team_id  %d src buf %p dst buf %p\n", 
+                i, ep_rank, lsync->team_id, hc->host_rkeys[ep_rank].src_buf, hc->host_rkeys[ep_rank].dst_buf);
     }
 
     hc->rail = lsync->rail;
@@ -344,8 +348,10 @@ static void dpu_coll_free_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     UCC_CHECK(ucc_team_get_size(team, &team_size));
     CTX_LOG("Freeing src/dst rkeys for %u hosts\n", team_size);
     for (i = 0; i < team_size; i++) {
-        ucp_rkey_destroy(ctx->hc->host_src_rkeys[i]);
-        ucp_rkey_destroy(ctx->hc->host_dst_rkeys[i]);
+        if (ctx->hc->host_src_rkeys[i] != NULL)
+            ucp_rkey_destroy(ctx->hc->host_src_rkeys[i]);
+        if (ctx->hc->host_dst_rkeys[i] != NULL)
+            ucp_rkey_destroy(ctx->hc->host_dst_rkeys[i]);
     }
 }
 

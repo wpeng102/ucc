@@ -643,8 +643,8 @@ uint64_t dpu_get_ep_rank(dpu_hc_t *hc,  int rank, int team_id, thread_ctx_t *ctx
         world_rank = ctx->comm.team_ctx_ranks[team_id][rank];
     }
 
-    ep_rank = world_rank * hc->dpu_per_node_cnt  + (hc->world_rank %
-         hc->dpu_per_node_cnt);
+    ep_rank = world_rank * hc->dpu_per_node_cnt  + (world_rank %
+            hc->dpu_per_node_cnt);
 
     return ep_rank;
 }
