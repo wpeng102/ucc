@@ -16,6 +16,11 @@
 
 #define STR(x) #x
 
+#define UCS_CHECK(_call) if (UCS_OK != (_call)) {              \
+        fprintf(stderr, "*** UCS TEST FAIL: %s\n", STR(_call)); \
+        MPI_Abort(MPI_COMM_WORLD, -1);                           \
+    }
+
 #define UCC_CHECK(_call) if (UCC_OK != (_call)) {              \
         fprintf(stderr, "*** UCC TEST FAIL: %s\n", STR(_call)); \
         MPI_Abort(MPI_COMM_WORLD, -1);                           \
@@ -50,6 +55,9 @@ typedef struct {
     ucc_context_h ctx;
     ucc_team_h team; /* this team always is dpu comm world team */
     ucc_team_h team_pool[DPU_TEAM_POOL_SIZE];
+    ucc_rank_t * team_ctx_ranks[DPU_TEAM_POOL_SIZE]; /* array of lists that
+                                                        maps world rank to team
+                                                        ranks */
 } dpu_ucc_comm_t;
 
 int dpu_ucc_init(int argc, char **argv, dpu_ucc_global_t *g);

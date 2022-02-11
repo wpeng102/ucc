@@ -4,6 +4,7 @@
  */
 
 #include "server_ucc.h"
+#include "host_channel.h"
 #include <assert.h>
 
 // typedef struct ucc_test_oob_allgather_req {
@@ -138,8 +139,7 @@ int dpu_ucc_alloc_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
     comm->g = g;
     UCCCHECK_GOTO(ucc_mpi_create_team(comm), free_ctx, status);
 
-    /* comm world team  id is 1 */
-    comm->team_pool[1] = comm->team;
+    comm->team_pool[UCC_WORLD_TEAM_ID] = comm->team;
 
     return status;
 free_ctx:
