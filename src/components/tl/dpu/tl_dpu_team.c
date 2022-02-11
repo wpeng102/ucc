@@ -33,6 +33,7 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team, int rail)
     team_mirroring_signal.coll_id              = ctx->dpu_ctx_list[rail].coll_id_issued;
     team_mirroring_signal.coll_args.coll_type  = UCC_COLL_TYPE_LAST;
     team_mirroring_signal.team_id              = ucc_team->id;
+    team_mirroring_signal.dpu_per_node_cnt     = ctx->dpu_per_node_cnt;
 
     /* register the rank list in world with hca and give its rdma
      * key/address to dpu*/
