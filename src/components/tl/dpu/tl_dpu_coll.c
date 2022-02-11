@@ -396,6 +396,7 @@ ucc_status_t ucc_tl_dpu_allreduce_init(ucc_tl_dpu_task_t *task)
         task_put_sync->create_new_team   = 0;
         task_put_sync->dpu_per_node_cnt  = task->dpu_per_node_cnt;
         task_put_sync->rail              = rail;
+        task_put_sync->num_ranks         = team->size;
     }
 
     return UCC_OK;

@@ -786,6 +786,7 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
     ucs_status_ptr_t request;
     dpu_pipeline_t *pp = &hc->pipeline;
     uint32_t host_team_size = sync->num_ranks;
+    assert(host_team_size >= 1);
 
     for (i=0; i<10; i++) {
         if (ucp_worker_progress(hc->ucp_worker)) {
