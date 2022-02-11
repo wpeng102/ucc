@@ -297,7 +297,7 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     memset(hc->host_rkeys, 0, sizeof(host_rkey_t) * hc->world_size);
 
     for (i = 0; i < team_size; i++) {
-        ep_rank  = dpu_get_ep_rank(hc, i, lsync->team_id, ctx);
+        ep_rank  = dpu_get_world_rank(hc, i, lsync->team_id, ctx);
         memcpy(&hc->host_rkeys[ep_rank], &hc->world_lsyncs[i].rkeys, sizeof(host_rkey_t));
         assert(NULL != hc->host_rkeys[ep_rank].src_rkey_buf);
         assert(NULL != hc->host_rkeys[ep_rank].dst_rkey_buf);
@@ -402,18 +402,30 @@ static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
             ctx->idx, ctx->coll_sync->coll_id);
 
     /* read in the rank list in comm world */
-    int i =0;
+    int i = 0, idx = 0, rail = 0;
     int team_id = lsync->team_id;
-    ucc_rank_t team_size = lsync->num_ranks;
+    ucc_rank_t dpu_team_size, host_team_size = lsync->num_ranks;
     ucc_rank_t full_size = ctx->comm.g->size;
     ucc_team_h new_team = NULL;
     ucc_team_params_t team_params = {0};
     ucc_status_t status;
-    ucc_rank_t *rank_list = malloc(sizeof(ucc_rank_t) * team_size);
+    uint16_t dpu_per_node_cnt = lsync->dpu_per_node_cnt;
 
-    memcpy(rank_list, lsync->rank_list, sizeof(ucc_rank_t) * team_size);
+    dpu_team_size = host_team_size * dpu_per_node_cnt;
 
-    CTX_LOG("got the rank list from host, new team size: %d\n", team_size);
+    ucc_rank_t *dpu_rank_list = malloc(sizeof(ucc_rank_t) * dpu_team_size);
+    ucc_rank_t *host_rank_list = malloc(sizeof(ucc_rank_t) * host_team_size);
+
+    for (i = 0; i < host_team_size; i++) {
+        for (rail = 0; rail < dpu_per_node_cnt; rail++) {
+            dpu_rank_list[idx++] = (lsync->rank_list[i] * dpu_per_node_cnt) + rail;
+        }
+    }
+
+    memcpy(host_rank_list, lsync->rank_list, sizeof(ucc_rank_t) * host_team_size);
+
+    CTX_LOG("got the rank list from host, new dpu team size: %d and host team size: %d\n",
+            dpu_team_size, host_team_size);
 
     /* now we have the rank list in comm world available  */
     team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
@@ -422,13 +434,13 @@ static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
                            UCC_TEAM_PARAM_FIELD_EP_MAP;
 
     /* find my new rank in the new team */
-    for(i = 0; i < team_size; i++) {
-        if (rank_list[i] == ctx->comm.g->rank) {
+    for(i = 0; i < dpu_team_size; i++) {
+        if (dpu_rank_list[i] == ctx->comm.g->rank) {
             break;
         }
     }
     team_params.ep = i; 
-    team_params.ep_map = ucc_ep_map_from_array(&rank_list, team_size, full_size, 0);
+    team_params.ep_map = ucc_ep_map_from_array(&dpu_rank_list, dpu_team_size, full_size, 0);
 
     status = ucc_team_create_post(&ctx->comm.ctx, 1, &team_params, &new_team);
     if (UCC_OK != status) {
@@ -449,8 +461,9 @@ static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     /* a new team has been created, insert it into the thread context */
     assert(new_team != NULL);
     ctx->comm.team_pool[lsync->team_id] = new_team; 
-    ctx->comm.team_ctx_ranks[team_id] = rank_list;
-    CTX_LOG("created new team with size: %d\n", team_size);
+    ctx->comm.dpu_team_ctx_ranks[team_id] = dpu_rank_list;
+    ctx->comm.host_team_ctx_ranks[team_id] = host_rank_list;
+    CTX_LOG("created new team with size: %d\n", dpu_team_size);
 }
 
 static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
@@ -472,9 +485,13 @@ static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     } while (status != UCC_OK);
 
     ctx->comm.team_pool[team_id] = NULL; 
-    if (ctx->comm.team_ctx_ranks[team_id] != NULL) {
-        free(ctx->comm.team_ctx_ranks[team_id]);
-        ctx->comm.team_ctx_ranks[team_id] = NULL;
+    if (ctx->comm.dpu_team_ctx_ranks[team_id] != NULL) {
+        free(ctx->comm.dpu_team_ctx_ranks[team_id]);
+        ctx->comm.dpu_team_ctx_ranks[team_id] = NULL;
+    }
+    if (ctx->comm.host_team_ctx_ranks[team_id] != NULL) {
+        free(ctx->comm.host_team_ctx_ranks[team_id]);
+        ctx->comm.host_team_ctx_ranks[team_id] = NULL;
     }
 
     CTX_LOG("destroyed team with team_id = %d for thread ctx->id = %d \n", team_id, ctx->idx);
@@ -484,7 +501,8 @@ void dpu_comm_thread(void *arg)
 {
     thread_ctx_t    *ctx = (thread_ctx_t *)arg;
     dpu_hc_t        *hc = ctx->hc;
-    uint32_t        coll_id;     
+    uint32_t        coll_id, dpu_team_size;
+    ucc_rank_t dpu_team_rank;
     ucc_coll_type_t coll_type; 
     size_t          count_total; 
     uint16_t        team_id; 
@@ -552,13 +570,17 @@ void dpu_comm_thread(void *arg)
 
         else if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
             dpu_coll_collect_host_rkeys(ctx, lsync);
+            ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+            assert(team != NULL);
+            UCC_CHECK(ucc_team_get_size(team, &dpu_team_size));
+            UCC_CHECK(ucc_team_get_my_ep(team, &dpu_team_rank));
 
             ucc_datatype_t dtype = lsync->coll_args.src.info.datatype;
             size_t dt_size = dpu_ucc_dt_size(dtype);
-            hc->pipeline.my_count  = lsync->count_total / hc->world_size;
-            hc->pipeline.my_offset = hc->pipeline.my_count * dt_size * hc->world_rank;
-            if (hc->world_rank == hc->world_size - 1) {
-                hc->pipeline.my_count += lsync->count_total % hc->world_size;
+            hc->pipeline.my_count  = lsync->count_total / dpu_team_size;
+            hc->pipeline.my_offset = hc->pipeline.my_count * dt_size * dpu_team_rank;
+            if (dpu_team_rank == dpu_team_size - 1) {
+                hc->pipeline.my_count += lsync->count_total % dpu_team_size;
             }
 
             dpu_signal_comp_thread(ctx, thread_main_sync);
@@ -625,6 +647,7 @@ void *dpu_worker_thread(void *arg)
     ucc_coll_req_h request = NULL;
     size_t count_serviced;
     uint16_t create_team, team_id;
+    uint32_t dpu_team_size;
 
     assert(ctx->idx == THREAD_IDX_WORKER);
     dpu_thread_set_affinity(ctx);
@@ -698,7 +721,10 @@ void *dpu_worker_thread(void *arg)
 
         } while (!finished);
 
-        ctx->coll_sync->count_serviced = ctx->hc->pipeline.my_count * ctx->hc->world_size;
+        ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+        assert(team != NULL);
+        UCC_CHECK(ucc_team_get_size(team, &dpu_team_size));
+        ctx->coll_sync->count_serviced = ctx->hc->pipeline.my_count * dpu_team_size;
         CTX_LOG("End coll id: %d, type: %d, count total: %lu, count serviced: %zu\n",
                 coll_id, coll_type, count_total, (size_t)ctx->coll_sync->count_serviced);
         dpu_signal_comm_thread(ctx, thread_main_sync);

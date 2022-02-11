@@ -90,8 +90,8 @@ static inline ucc_status_t dpu_init_completion_wait(ucc_tl_dpu_context_t *ctx) {
             ucp_worker_progress(dpu_connect->ucp_worker);
         }
 
-        assert(get_sync.count_serviced == -1);
-        assert(get_sync.coll_id == -1);
+        //assert(get_sync.count_serviced == -1);
+        //assert(get_sync.coll_id == -1);
 
         tl_info(ctx->super.super.lib,
                 "Received completion notification from DPU rail %d \n",  rail); 
