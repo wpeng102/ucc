@@ -164,7 +164,7 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
     assert(ctx->idx == THREAD_IDX_COMM);
 
     ucs_status_t status;
-    size_t team_rank, team_size;
+    ucc_rank_t team_rank, team_size;
     dpu_hc_t *hc = ctx->hc;
     ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
     ucc_coll_args_t *args = &lsync->coll_args;
@@ -254,7 +254,7 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     ucc_coll_req_h request;
     dpu_hc_t *hc = ctx->hc;
     ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
-    unsigned int team_size = 0;
+    ucc_rank_t team_size = 0;
     UCC_CHECK(ucc_team_get_size(team, &team_size));
     void *src_buf = lsync;
     void *dst_buf = hc->world_lsyncs;
@@ -459,7 +459,7 @@ static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     CTX_LOG("destroyed team with team_id = %d \n", team_id);
 }
 
-void dpu_comm_thread(void *arg)
+void *dpu_comm_thread(void *arg)
 {
     thread_ctx_t    *ctx = (thread_ctx_t *)arg;
     dpu_hc_t        *hc = ctx->hc;
@@ -628,8 +628,8 @@ void *dpu_worker_thread(void *arg)
             dpu_waitfor_comm_thread(ctx, thread_sub_sync);
             assert(UCC_COLL_TYPE_ALLREDUCE == coll_type);
 
-            dpu_buf_t *accbuf = thread_sub_sync->accbuf;
-            dpu_buf_t *getbuf = thread_sub_sync->getbuf;
+            dpu_buf_t *accbuf = (dpu_buf_t*) thread_sub_sync->accbuf;
+            dpu_buf_t *getbuf = (dpu_buf_t*) thread_sub_sync->getbuf;
             if (accbuf == NULL && getbuf == NULL) {
                 finished = 1;
                 goto done;

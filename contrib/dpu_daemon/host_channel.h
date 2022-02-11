@@ -224,7 +224,8 @@ typedef struct thread_sync_t {
     volatile unsigned int pad1[15]; /* pad to 64bytes */
     volatile unsigned int done;     /* second cache line */
     volatile unsigned int pad2[15]; /* pad to 64 bytes */
-    volatile dpu_buf_t *accbuf, *getbuf;
+    volatile dpu_buf_t *accbuf;
+    volatile dpu_buf_t *getbuf;
 } thread_sync_t;
 
 extern thread_sync_t *thread_main_sync;
