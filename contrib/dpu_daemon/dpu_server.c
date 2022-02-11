@@ -20,7 +20,7 @@
 #define THREAD_IDX_WORKER 0
 #define THREAD_IDX_COMM   1
 
-thread_sync_t syncs[2];
+thread_sync_t syncs[2] = {0};
 thread_sync_t *thread_main_sync = &syncs[0];
 thread_sync_t *thread_sub_sync  = &syncs[1];
 dpu_put_sync_t tmp_sync = {0};
@@ -677,8 +677,9 @@ void *dpu_worker_thread(void *arg)
             dpu_waitfor_comm_thread(ctx, thread_sub_sync);
             assert(UCC_COLL_TYPE_ALLREDUCE == coll_type);
 
-            dpu_buf_t *accbuf = (dpu_buf_t*) thread_sub_sync->accbuf;
-            dpu_buf_t *getbuf = (dpu_buf_t*) thread_sub_sync->getbuf;
+            dpu_buf_t *accbuf = thread_sub_sync->accbuf;
+            dpu_buf_t *getbuf = thread_sub_sync->getbuf;
+            CTX_LOG("accbuf %p getbuf %p\n", accbuf, getbuf);
             if (accbuf == NULL && getbuf == NULL) {
                 finished = 1;
                 goto done;
@@ -712,14 +713,22 @@ int main(int argc, char **argv)
     dpu_ucc_global_t ucc_glob;
     dpu_hc_t         hc;
     dpu_get_sync_t   coll_sync;
+    char *s = NULL;
 
-    int omp_threads = atoi(getenv("UCC_MC_CPU_REDUCE_NUM_THREADS"));
+    int omp_threads = 6;
+    s = getenv("UCC_MC_CPU_REDUCE_NUM_THREADS");
+    if (s) { omp_threads = atoi(s); }
     printf("DPU daemon: Running with %d OpenMP threads\n", omp_threads);
+    
+    int window_size = 32;
+    s = getenv("UCC_TL_DPU_BCAST_WINDOW");
+    if (s) { window_size = atoi(s); }
 
     UCC_CHECK(dpu_ucc_init(argc, argv, &ucc_glob));
     UCC_CHECK(dpu_hc_init(&hc));
     UCC_CHECK(dpu_hc_accept(&hc));
 
+    hc.window_size = window_size;
     printf("Host channel is intialized \n");
 
     memset(&coll_sync, 0, sizeof(coll_sync));
@@ -740,7 +749,7 @@ int main(int argc, char **argv)
     UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx.comm));
     pthread_create(&comm_ctx.id, NULL, dpu_comm_thread, &comm_ctx);
 
-    UCS_CHECK(dpu_set_init_completion(&hc));
+    UCS_CHECK(dpu_send_init_completion(&hc));
 
     pthread_join(worker_ctx.id, NULL);
     pthread_join(comm_ctx.id, NULL);

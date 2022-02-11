@@ -31,10 +31,6 @@
 #define ERROR               1
 #define DEFAULT_PORT        13337
 
-#define EXCHANGE_LENGTH_TAG 1ull
-#define EXCHANGE_RKEY_TAG 2ull
-#define EXCHANGE_ADDR_TAG 3ull
-
 #define DPU_MIN(a,b) (((a)<(b))?(a):(b))
 #define DPU_MAX(a,b) (((a)>(b))?(a):(b))
 
@@ -200,6 +196,7 @@ typedef struct dpu_hc_t {
     /* Multi-rail support */
     int rail;
     int dpu_per_node_cnt;
+    int window_size;
 
     /* global visibility of collectives */
     dpu_put_sync_t *world_lsyncs;
@@ -222,10 +219,8 @@ typedef struct thread_ctx_t {
 
 /* thread accisble data - split reader/writer */
 typedef struct thread_sync_t {
-    volatile unsigned int todo;     /* first cache line */
-    volatile unsigned int pad1[15]; /* pad to 64bytes */
-    volatile unsigned int done;     /* second cache line */
-    volatile unsigned int pad2[15]; /* pad to 64 bytes */
+    volatile unsigned int todo;
+    volatile unsigned int done;
     volatile dpu_buf_t *accbuf;
     volatile dpu_buf_t *getbuf;
 } thread_sync_t;
@@ -238,7 +233,7 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
 ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, thread_ctx_t *ctx, dpu_stage_t *stage, dpu_buf_t *accbuf, dpu_buf_t *getbuf);
 ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 ucs_status_t dpu_hc_issue_hangup(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
-ucs_status_t dpu_set_init_completion(dpu_hc_t *hc);
+ucs_status_t dpu_send_init_completion(dpu_hc_t *hc);
 
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);
 
