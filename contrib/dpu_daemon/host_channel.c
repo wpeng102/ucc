@@ -630,34 +630,47 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
     return 0;
 }
 
-uint64_t dpu_get_ep_rank(dpu_hc_t *hc,  int rank, int team_id, thread_ctx_t *ctx) {
+ucc_rank_t dpu_get_world_rank(dpu_hc_t *hc,  int dpu_rank, int team_id, thread_ctx_t *ctx) {
+
+    ucc_rank_t  world_rank;
+
+    if (team_id == UCC_WORLD_TEAM_ID) {
+        world_rank = dpu_rank;
+    } else {
+        world_rank = ctx->comm.dpu_team_ctx_ranks[team_id][dpu_rank];
+    }
+
+    return world_rank;
+}
+
+ucc_rank_t dpu_get_host_ep_rank(dpu_hc_t *hc,  int host_rank, int team_id, thread_ctx_t *ctx) {
 
     /* find my world_rank of the remote process in dpu comm world then find
      * its ep_rank */
 
-    uint64_t ep_rank, world_rank;
+    ucc_rank_t ep_rank, world_rank;
 
     if (team_id == UCC_WORLD_TEAM_ID) {
-        world_rank = rank;
+        world_rank = host_rank;
     } else {
-        world_rank = ctx->comm.team_ctx_ranks[team_id][rank];
+        //world_rank = ctx->comm.team_ctx_ranks[team_id][host_rank];
+        world_rank = ctx->comm.host_team_ctx_ranks[team_id][host_rank];
     }
 
-    ep_rank = world_rank * hc->dpu_per_node_cnt  + (world_rank %
-            hc->dpu_per_node_cnt);
+ // ep_rank = world_rank * hc->dpu_per_node_cnt  + (world_rank %
+   //         hc->dpu_per_node_cnt);
+    ep_rank = world_rank * hc->dpu_per_node_cnt;
 
     return ep_rank;
-}
 
+}
 
 ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *getbuf, thread_ctx_t *ctx)
 {
     assert(stage->phase == INIT || stage->phase == REDUCE);
     assert(getbuf->state == FREE && getbuf->ucp_req == NULL);
     getbuf->state = SENDRECV;
-    uint32_t team_size = 0;
-    ucc_team_h team = ctx->comm.team_pool[sync->team_id];
-    UCC_CHECK(ucc_team_get_size(team, &team_size));
+    uint32_t host_team_size = sync->num_ranks;
 
     ucc_datatype_t dtype = sync->coll_args.src.info.datatype;
     size_t dt_size = dpu_ucc_dt_size(dtype);
@@ -665,7 +678,7 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     size_t count = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
     size_t get_offset = hc->pipeline.my_offset + hc->pipeline.count_received * dt_size;
     int src_rank = stage->src_rank;
-    int ep_src_rank  = dpu_get_ep_rank(hc, src_rank, sync->team_id, ctx);
+    int ep_src_rank  = dpu_get_host_ep_rank(hc, src_rank, sync->team_id, ctx);
     getbuf->count = count;
 
     if (0 == count) {
@@ -684,7 +697,7 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
             ucp_get_nbx(hc->host_eps[ep_src_rank], dst_addr, data_size,
             (uint64_t)src_addr, hc->host_src_rkeys[ep_src_rank], &hc->req_param);
     
-    stage->src_rank = (src_rank + 1) % (team_size / hc->dpu_per_node_cnt);
+    stage->src_rank = (src_rank + 1) % host_team_size;
     return UCS_OK;
 }
 
@@ -693,16 +706,13 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     assert(stage->phase == BCAST);
     // assert(accbuf->state == IDLE && accbuf->ucp_req == NULL);
     accbuf->state = SENDRECV;
-    uint32_t team_size = 0;
-    ucc_team_h team = ctx->comm.team_pool[sync->team_id];
-    UCC_CHECK(ucc_team_get_size(team, &team_size));
-
+    uint32_t host_team_size = sync->num_ranks;
     ucc_datatype_t dtype = sync->coll_args.src.info.datatype;
     size_t dt_size = dpu_ucc_dt_size(dtype);
     size_t count = accbuf->count;
     size_t put_offset = hc->pipeline.my_offset + hc->pipeline.count_serviced * dt_size;
     int dst_rank = stage->dst_rank;
-    int ep_dst_rank  = dpu_get_ep_rank(hc, dst_rank, sync->team_id, ctx);
+    int ep_dst_rank  = dpu_get_host_ep_rank(hc, dst_rank, sync->team_id, ctx);
 
 
     size_t data_size = count * dt_size;
@@ -721,7 +731,7 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
             ucp_put_nbx(hc->host_eps[ep_dst_rank], src_addr, data_size * 0,
             (uint64_t)dst_addr, hc->host_dst_rkeys[ep_dst_rank], &hc->req_param);
 
-    stage->dst_rank = (dst_rank + 1) % (team_size / hc->dpu_per_node_cnt);
+    stage->dst_rank = (dst_rank + 1) % host_team_size;
     return UCS_OK;
 }
 
@@ -776,9 +786,7 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
     ucc_status_t status;
     ucs_status_ptr_t request;
     dpu_pipeline_t *pp = &hc->pipeline;
-    uint32_t team_size = 0;
-    ucc_team_h team = ctx->comm.team_pool[sync->team_id];
-    UCC_CHECK(ucc_team_get_size(team, &team_size)); //FIXME this only works for single rail
+    uint32_t host_team_size = sync->num_ranks;
 
     for (i=0; i<1; i++) {
         if (ucp_worker_progress(hc->ucp_worker)) {
@@ -810,7 +818,7 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
         }
         break;
         case REDUCE:
-        if (getbuf->state == FREE && stage->done_get < team_size) {
+        if (getbuf->state == FREE && stage->done_get < host_team_size) {
             assert(stage->done_get > 0);
             dpu_hc_issue_get(hc, sync, stage, getbuf, ctx);
             // assert(getbuf->ucp_req != NULL);
@@ -824,7 +832,7 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
                 DPU_LOG("Received %ld bytes into getbuf[%d], gets done %d\n",
                         getbuf->count, stage->get_idx, stage->done_get);
 
-                if (stage->done_get == team_size) {
+                if (stage->done_get == host_team_size) {
                     pp->count_received += accbuf->count;
                 }
             }
@@ -846,7 +854,7 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
                         redbuf->count, stage->red_idx, stage->done_red);
                 thread_sub_sync->accbuf = thread_sub_sync->getbuf = NULL;
 
-                if (stage->done_red == team_size-1) {
+                if (stage->done_red == host_team_size-1) {
                     /* Start broadcast */
                     stage->phase = BCAST;
                     pp->count_reduced += accbuf->count;
@@ -856,13 +864,13 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
         break;
         case BCAST:
         if (accbuf->state == IDLE && accbuf->count > 0) {
-            DPU_LOG("Broadcasting team_size %d done get %d red %d put %d\n",
-                    team_size, stage->done_get, stage->done_red, stage->done_put);
-            assert(stage->done_get == team_size);
-            assert(stage->done_red == team_size-1);
-            assert(stage->done_put < team_size);
+            DPU_LOG("Broadcasting host_team_size %d done get %d red %d put %d\n",
+                    host_team_size, stage->done_get, stage->done_red, stage->done_put);
+            assert(stage->done_get == host_team_size);
+            assert(stage->done_red == host_team_size-1);
+            assert(stage->done_put < host_team_size);
 
-            window_size = DPU_MIN(window_size, (team_size-stage->done_put));
+            window_size = DPU_MIN(window_size, (host_team_size-stage->done_put));
             /* Issue a window of RDMA writes */
             for (int j=0; j<window_size; j++) {
                 dpu_hc_issue_put(hc, sync, stage, accbuf, ctx);
@@ -881,7 +889,7 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
                 DPU_LOG("Sent %ld bytes from accbuf, puts done %d\n",
                         accbuf->count, stage->done_put);
                 
-                if (stage->done_put == team_size) {
+                if (stage->done_put == host_team_size) {
                     /* Done with this stage */
                     pp->count_serviced += accbuf->count;
                     /* Reset this stage counters */

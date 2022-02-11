@@ -86,9 +86,12 @@ static inline ucc_status_t dpu_init_completion_wait(ucc_tl_dpu_context_t *ctx) {
                 &get_sync, sizeof(ucc_tl_dpu_get_sync_t),
                 req_tag, tag_mask, &req_param);
     
-        ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, recv_req);
-        assert(get_sync.count_serviced == -1);
-        assert(get_sync.coll_id == -1);
+        while((ucc_tl_dpu_req_test(&recv_req, dpu_connect->ucp_worker) != UCC_OK)) {
+            ucp_worker_progress(dpu_connect->ucp_worker);
+        }
+
+        //assert(get_sync.count_serviced == -1);
+        //assert(get_sync.coll_id == -1);
 
         tl_info(ctx->super.super.lib,
                 "Received completion notification from DPU rail %d \n",  rail); 
