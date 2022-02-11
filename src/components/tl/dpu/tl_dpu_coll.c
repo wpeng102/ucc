@@ -297,20 +297,19 @@ static ucc_status_t ucc_tl_dpu_check_progress(
             ucc_tl_dpu_task_req_t *task_reqs = &sub_task->task_reqs;
             ucc_tl_dpu_req_test(&task_reqs->recv_req, dpu_connect->ucp_worker);
 
-            if (sub_task->get_sync.coll_id < sub_task->put_sync.coll_id ||
-                sub_task->get_sync.count_serviced < sub_task->put_sync.count_total) {
-                return UCC_INPROGRESS;
+            if (sub_task->get_sync.coll_id == sub_task->put_sync.coll_id &&
+                sub_task->get_sync.count_serviced == sub_task->put_sync.count_total) {
+
+                team->dpu_sync_list[rail].coll_id_completed = ++dpu_connect->coll_id_completed;
+                assert(team->dpu_sync_list[rail].coll_id_completed == sub_task->get_sync.coll_id);
+                sub_task->status = UCC_TL_DPU_TASK_STATUS_DONE;
+
+                tl_info(UCC_TL_TEAM_LIB(task->team),
+                    "Collective task %p coll id %d is marked DONE for rail: %d\n",
+                    task, sub_task->put_sync.coll_id, rail);
+                rails_done++;
             }
-
-            team->dpu_sync_list[rail].coll_id_completed = ++dpu_connect->coll_id_completed;
-            assert(team->dpu_sync_list[rail].coll_id_completed == sub_task->get_sync.coll_id);
-            sub_task->status = UCC_TL_DPU_TASK_STATUS_DONE;
-
-            tl_info(UCC_TL_TEAM_LIB(task->team),
-                "Collective task %p coll id %d is marked DONE for rail: %d\n",
-                task, sub_task->put_sync.coll_id, rail);
-            rails_done++;
-        }    
+        }
     }
 
     if (rails_done == task->dpu_per_node_cnt) {

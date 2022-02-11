@@ -147,12 +147,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
                 hangup.coll_id);
         hangup_req = ucp_tag_send_nbx(dpu_connect->ucp_ep,
                         &hangup, sizeof(hangup), req_tag, &req_param);
-        if (ucc_tl_dpu_req_check(team, hangup_req) != UCC_OK) {
-            return UCC_ERR_NO_MESSAGE;
-        }
-        while((ucc_tl_dpu_req_test(&hangup_req, dpu_connect->ucp_worker) != UCC_OK)) {
-            ucp_worker_progress(dpu_connect->ucp_worker);
-        }
+        ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, hangup_req);
         tl_info(ctx->super.super.lib, "sent hangup/team_free to dpu team");
 
         ucs_status_ptr_t request = ucp_worker_flush_nbx(dpu_connect->ucp_worker, &req_param);
