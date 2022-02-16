@@ -289,6 +289,7 @@ static ucc_status_t ucc_tl_dpu_check_progress(
         }
     }
 
+    rails_done = 0;
     for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
         sub_task = &task->dpu_task_list[rail];
         ucc_tl_dpu_connect_t *dpu_connect = &ctx->dpu_ctx_list[rail];
@@ -309,6 +310,8 @@ static ucc_status_t ucc_tl_dpu_check_progress(
                     task, sub_task->put_sync.coll_id, rail);
                 rails_done++;
             }
+        } else {
+            rails_done++;
         }
     }
 
