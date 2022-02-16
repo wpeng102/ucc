@@ -62,6 +62,8 @@ ucc_status_t ucc_mpi_create_team_nb(dpu_ucc_comm_t *comm)
         }
     };
 
+    assert(comm->g->size > 0);
+
     status = ucc_team_create_post(&comm->ctx, 1, &team_params, &comm->team);
 
     return status;

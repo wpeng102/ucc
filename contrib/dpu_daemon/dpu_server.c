@@ -502,7 +502,7 @@ void dpu_comm_thread(void *arg)
     thread_ctx_t    *ctx = (thread_ctx_t *)arg;
     dpu_hc_t        *hc = ctx->hc;
     uint32_t        coll_id, dpu_team_size;
-    ucc_rank_t dpu_team_rank;
+    size_t          dpu_team_rank;
     ucc_coll_type_t coll_type; 
     size_t          count_total; 
     uint16_t        team_id; 
@@ -574,7 +574,7 @@ void dpu_comm_thread(void *arg)
             assert(team != NULL);
             UCC_CHECK(ucc_team_get_size(team, &dpu_team_size));
             UCC_CHECK(ucc_team_get_my_ep(team, &dpu_team_rank));
-
+ 
             ucc_datatype_t dtype = lsync->coll_args.src.info.datatype;
             size_t dt_size = dpu_ucc_dt_size(dtype);
             hc->pipeline.my_count  = lsync->count_total / dpu_team_size;
