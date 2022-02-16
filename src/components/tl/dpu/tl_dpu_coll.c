@@ -289,7 +289,6 @@ static ucc_status_t ucc_tl_dpu_check_progress(
         }
     }
 
-    rails_done = 0;
     for (rail = 0; rail < task->dpu_per_node_cnt; rail++) {
         sub_task = &task->dpu_task_list[rail];
         ucc_tl_dpu_connect_t *dpu_connect = &ctx->dpu_ctx_list[rail];
@@ -305,13 +304,12 @@ static ucc_status_t ucc_tl_dpu_check_progress(
                 assert(team->dpu_sync_list[rail].coll_id_completed == sub_task->get_sync.coll_id);
                 sub_task->status = UCC_TL_DPU_TASK_STATUS_DONE;
 
-            tl_info(UCC_TL_TEAM_LIB(task->team),
-                "Collective task %p coll id %d is marked DONE for rail: %d\n",
-                task, sub_task->put_sync.coll_id, rail);
-            rails_done++;
-        } else {
-            rails_done++;
-        }    
+                tl_info(UCC_TL_TEAM_LIB(task->team),
+                    "Collective task %p coll id %d is marked DONE for rail: %d\n",
+                    task, sub_task->put_sync.coll_id, rail);
+                rails_done++;
+            }
+        }
     }
 
     if (rails_done == task->dpu_per_node_cnt) {

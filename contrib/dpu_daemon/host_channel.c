@@ -731,7 +731,7 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     
     ucp_worker_fence(hc->ucp_worker);
     accbuf->ucp_req =
-            ucp_put_nbx(hc->host_eps[ep_dst_rank], src_addr, data_size * 0,
+            ucp_put_nbx(hc->host_eps[ep_dst_rank], src_addr, data_size,
             (uint64_t)dst_addr, hc->host_dst_rkeys[ep_dst_rank], &hc->req_param);
 
     stage->dst_rank = (dst_rank + 1) % host_team_size;
