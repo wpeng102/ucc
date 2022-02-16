@@ -681,6 +681,8 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     int ep_src_rank  = dpu_get_host_ep_rank(hc, src_rank, sync->team_id, ctx);
     getbuf->count = count;
 
+    assert(src_rank < host_team_size);
+
     if (0 == count) {
         return UCS_ERR_NO_RESOURCE;
     }
@@ -689,8 +691,8 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     void *src_addr = hc->host_rkeys[ep_src_rank].src_buf + get_offset;
     void *dst_addr = getbuf->buf;
 
-    DPU_LOG("Issue Get from %d offset %lu src %p dst %p count %lu bytes %lu\n",
-            src_rank, get_offset, src_addr, dst_addr, count, data_size);
+    DPU_LOG("Issue Get from %d offset %lu src %p dst %p count %lu bytes %lu host_team_size: %d \n",
+            src_rank, get_offset, src_addr, dst_addr, count, data_size, host_team_size);
     
     ucp_worker_fence(hc->ucp_worker);
     getbuf->ucp_req =
@@ -714,13 +716,14 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     int dst_rank = stage->dst_rank;
     int ep_dst_rank  = dpu_get_host_ep_rank(hc, dst_rank, sync->team_id, ctx);
 
+    assert(dst_rank < host_team_size);
 
     size_t data_size = count * dt_size;
     void *src_addr = accbuf->buf;
     void *dst_addr = hc->host_rkeys[ep_dst_rank].dst_buf + put_offset;
 
-    DPU_LOG("Issue Put to %d offset %lu src %p dst %p count %lu bytes %lu\n",
-            dst_rank, put_offset, src_addr, dst_addr, count, data_size);
+    DPU_LOG("Issue Put to %d offset %lu src %p dst %p count %lu bytes %lu host_team_size: %d\n",
+            dst_rank, put_offset, src_addr, dst_addr, count, data_size, host_team_size);
     assert(count > 0 && dt_size > 0 && accbuf->ucp_req == NULL);
 
     int32_t *pbuf = accbuf->buf;
@@ -803,6 +806,7 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
     switch(stage->phase) {
         case INIT:
         if (accbuf->state == FREE) {
+            stage->src_rank = stage->dst_rank = sync->host_team_rank;
             assert(stage->done_get == 0);
             dpu_hc_issue_get(hc, sync, stage, accbuf, ctx);
         } else if (accbuf->state == SENDRECV && accbuf->count > 0) {

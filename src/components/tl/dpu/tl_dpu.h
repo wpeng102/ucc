@@ -107,6 +107,7 @@ typedef struct ucc_tl_dpu_put_sync_t {
     uint16_t                 dpu_per_node_cnt;
     uint16_t                 create_new_team;
     uint16_t                 num_ranks;
+    ucc_rank_t               host_team_rank;
     ucc_rank_t               rank_list[MAX_NUM_RANKS];
     ucc_coll_args_t          coll_args;
     buf_info_v_t             src_v;

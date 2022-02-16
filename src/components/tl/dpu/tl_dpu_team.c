@@ -38,6 +38,7 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team, int rail)
     /* register the rank list in world with hca and give its rdma
      * key/address to dpu*/
     team_mirroring_signal.num_ranks = team->size;
+    team_mirroring_signal.host_team_rank = team->rank;
     memcpy(team_mirroring_signal.rank_list, ucc_team->ctx_ranks, team->size * sizeof(ucc_rank_t));
 
     tl_info(ctx->super.super.lib, "sending team_mirroring_signal to dpu team, "

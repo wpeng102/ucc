@@ -80,6 +80,7 @@ typedef struct dpu_put_sync_t {
     uint16_t            dpu_per_node_cnt;
     uint16_t            create_new_team;
     uint16_t            num_ranks;
+    ucc_rank_t          host_team_rank;
     ucc_rank_t          rank_list[MAX_NUM_RANKS];
     ucc_coll_args_t     coll_args;
     buf_info_v_t        src_v;
@@ -187,6 +188,8 @@ typedef struct dpu_hc_t {
     /* remote eps */
     int world_rank;
     int world_size;
+    uint64_t team_rank;
+    uint32_t team_size;
     ucp_ep_h *host_eps;
     ucp_ep_h *dpu_eps;
     host_rkey_t *host_rkeys;
