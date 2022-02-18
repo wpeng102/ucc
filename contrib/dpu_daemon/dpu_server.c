@@ -25,6 +25,8 @@ thread_sync_t *thread_main_sync = &syncs[0];
 thread_sync_t *thread_sub_sync  = &syncs[1];
 dpu_put_sync_t tmp_sync = {0};
 
+pthread_mutex_t sync_lock;
+
 /* TODO: export ucc_mc.h */
 ucc_status_t ucc_mc_reduce(const void *src1, const void *src2, void *dst,
                            size_t count, ucc_datatype_t dtype,
@@ -362,10 +364,12 @@ void dpu_waitfor_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync)
 
 void dpu_signal_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync)
 {
+    pthread_mutex_lock(&sync_lock);
     assert(sync->todo);
     assert(!sync->done);
     sync->todo = 0;
     sync->done = 1;
+    pthread_mutex_unlock(&sync_lock);
 }
 
 void dpu_waitfor_comp_thread(thread_ctx_t *ctx, thread_sync_t *sync)
@@ -375,8 +379,10 @@ void dpu_waitfor_comp_thread(thread_ctx_t *ctx, thread_sync_t *sync)
 
 void dpu_signal_comp_thread(thread_ctx_t *ctx, thread_sync_t *sync)
 {
+    pthread_mutex_lock(&sync_lock);
     sync->done = 0;
     sync->todo = 1;
+    pthread_mutex_unlock(&sync_lock);
 }
 
 void dpu_wait_for_next_coll(thread_ctx_t *ctx)
