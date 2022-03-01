@@ -202,7 +202,7 @@ static ucc_status_t ucc_tl_dpu_issue_send( ucc_tl_dpu_task_t *task,
     ucc_tl_dpu_sub_task_t *dpu_task = &task->dpu_task_list[rail];
     ucc_tl_dpu_task_req_t *task_reqs = &dpu_task->task_reqs;
     ucp_request_param_t req_param = {0};
-    ucp_tag_t req_tag = 0;
+    ucp_tag_t req_tag = ctx->cfg.pipeline_num_buffers+1;
 
     assert(dpu_task->status != UCC_TL_DPU_TASK_STATUS_POSTED);
     dpu_task->status = UCC_TL_DPU_TASK_STATUS_POSTED;
@@ -234,7 +234,7 @@ static ucc_status_t ucc_tl_dpu_issue_recv( ucc_tl_dpu_task_t *task,
     ucc_tl_dpu_sub_task_t *dpu_task = &task->dpu_task_list[rail];
     ucc_tl_dpu_task_req_t *task_reqs = &dpu_task->task_reqs;
     ucp_request_param_t req_param = {0};
-    ucp_tag_t req_tag = 0, tag_mask = 0;
+    ucp_tag_t req_tag = ctx->cfg.pipeline_num_buffers+1, tag_mask = -1;
 
     assert(dpu_task->status == UCC_TL_DPU_TASK_STATUS_POSTED);
     assert(task_reqs->recv_req == NULL);

@@ -49,7 +49,7 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team, int rail)
     team_mirroring_signal_req = ucp_tag_send_nbx(
             ctx->dpu_ctx_list[rail].ucp_ep,
             &team_mirroring_signal, sizeof(team_mirroring_signal),
-            0, &team_mirror_req_param);
+            ctx->cfg.pipeline_num_buffers+1, &team_mirror_req_param);
 
     if (ucc_tl_dpu_req_check(team, team_mirroring_signal_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
@@ -122,7 +122,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
     ucc_tl_dpu_put_sync_t       hangup;
     ucs_status_ptr_t            hangup_req;
     ucp_request_param_t         req_param = {0};
-    ucp_tag_t                   req_tag = 0;
+    ucp_tag_t                   req_tag = ctx->cfg.pipeline_num_buffers+1;
     ucc_tl_dpu_sync_t           *dpu_sync = NULL;
     ucc_tl_dpu_connect_t        *dpu_connect = NULL;
     int rail;

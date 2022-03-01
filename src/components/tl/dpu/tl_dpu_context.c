@@ -70,7 +70,8 @@ static inline ucc_status_t dpu_init_completion_wait(ucc_tl_dpu_context_t *ctx) {
 
     int rail, received = 0;
     ucp_request_param_t req_param = {0};
-    ucp_tag_t req_tag = 0, tag_mask = 0; 
+    ucp_tag_t req_tag = ctx->cfg.pipeline_num_buffers+1,
+              tag_mask = -1; 
     ucs_status_ptr_t recv_req[MAX_DPU_COUNT] = {0};
     ucc_tl_dpu_get_sync_t get_sync[MAX_DPU_COUNT] = {0};
     ucc_tl_dpu_connect_t *dpu_connect;
@@ -138,6 +139,8 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
     UCC_CLASS_CALL_SUPER_INIT(ucc_tl_context_t, tl_dpu_config->super.tl_lib,
                               params->context);
+
+    memcpy(&self->cfg, tl_dpu_config, sizeof(*tl_dpu_config));
 
     /* Find  DPU based on the host-dpu list */
     gethostname(hname, sizeof(hname) - 1);

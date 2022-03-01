@@ -8,13 +8,13 @@
 #
 
 
-UCX_DIR=$(BUILD_DIR)/ucx
+#UCX_DIR=$(BUILD_DIR)/ucx
 
-UCC_DIR=$(BUILD_DIR)/ucc
+#UCC_DIR=$(BUILD_DIR)/ucc
 
-MPI_DIR=$(BUILD_DIR)/ompi
+#MPI_DIR=$(BUILD_DIR)/ompi
 
-mpicc=$(MPI_DIR)/bin/mpicc
+mpicc=`which mpicc` ##$(MPI_DIR)/bin/mpicc
 
 CFLAGS = -I$(UCC_DIR)/include -I$(UCX_DIR)/include
 LDFLAGS = -L$(UCC_DIR)/lib $(UCC_DIR)/lib/libucc.so $(UCX_DIR)/lib/libucs.so $(UCX_DIR)/lib/libucp.so -Wl,-rpath -Wl,$(UCC_DIR)/lib -Wl,-rpath -Wl,$(UCC_DIR)/lib

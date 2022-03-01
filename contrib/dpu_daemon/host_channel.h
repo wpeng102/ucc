@@ -109,57 +109,72 @@ typedef struct dpu_mem_segs_t {
     dpu_mem_t sync;
     dpu_mem_t in;
     dpu_mem_t out;
+    dpu_mem_t out2;
 } dpu_mem_segs_t;
-
-typedef enum dpu_ar_phase_t {
-    WAIT,
-    INIT,
-    REDUCE,
-    BCAST,
-} dpu_ar_phase_t;
 
 typedef enum dpu_buf_state_t {
     FREE,
     SENDRECV,
-    REDUCING,
+    REDUCE,
     IDLE,
+    HOST,
 } dpu_buf_state_t;
 
 typedef struct dpu_buf_t {
     void                       *buf;
-    volatile dpu_buf_state_t    state;
-    volatile ucs_status_ptr_t   ucp_req;
-    volatile size_t             count;
+    volatile ucs_status_ptr_t   req;
 } dpu_buf_t;
 
-typedef struct dpu_stage_t {
-    dpu_buf_t accbuf;
-    dpu_buf_t getbuf[2];
-    
-    volatile dpu_ar_phase_t phase;
-    volatile int get_idx;
-    volatile int red_idx;
-    volatile int src_rank;
-    volatile int dst_rank;
-    
-    volatile int done_get;
-    volatile int done_red;
-    volatile int done_put;
-} dpu_stage_t;
+typedef struct dpu_bufs_t {
+    dpu_buf_t   acc;
+    dpu_buf_t   recv[2];
+    dpu_buf_state_t    state;
+    uint64_t    data_size;
+    size_t      dt_size;
+    uint32_t    count;
+    uint32_t    trip;
+    uint16_t    sidx;
+    uint16_t    ridx;
+} dpu_bufs_t;
 
-typedef struct dpu_pipeline_t {
-    size_t              buffer_size;
-    size_t              num_buffers;
+typedef struct dpu_buff_info_t {
+    uint32_t    buffer_size;
+    uint32_t    buffer_count;
+    uint32_t    max_bufs;
+    uint32_t    active;
+    uint32_t    completed;
+} dpu_buf_info_t;
+
+typedef struct dpu_ring_t {
     ucs_status_ptr_t    sync_req;
-    
-    dpu_stage_t         stages[2];
-    size_t              my_count;
-    size_t              my_offset;
+    ucp_ep_h right_dpu_ep;
+    ucp_ep_h left_dpu_ep;
 
-    volatile size_t     count_received;
-    volatile size_t     count_reduced;
-    volatile size_t     count_serviced;
-} dpu_pipeline_t;
+    dpu_bufs_t *bufs;
+
+    dpu_buf_info_t buf_info;
+    uint64_t reduce_idx;
+    uint64_t send_idx;
+    uint64_t vec_byte_get_offset;
+    uint64_t vec_byte_put_offset;
+    volatile uint64_t count_serviced;
+    uint64_t count_servicing;
+    uint64_t total_count;
+} dpu_ring_t;
+
+// typedef struct dpu_pipeline_t {
+//     size_t              buffer_size;
+//     size_t              num_buffers;
+//     ucs_status_ptr_t    sync_req;
+    
+//     dpu_stage_t         stages[2];
+//     size_t              my_count;
+//     size_t              my_offset;
+
+//     volatile size_t     count_received;
+//     volatile size_t     count_reduced;
+//     volatile size_t     count_serviced;
+// } dpu_pipeline_t;
 
 typedef struct dpu_hc_t {
     /* TCP/IP stuff */
@@ -176,33 +191,36 @@ typedef struct dpu_hc_t {
         dpu_mem_segs_t mem_segs;
         dpu_mem_t mem_segs_array[3];
     };
+
     /* Remote UCX stuff */
     ucp_ep_h localhost_ep;
     uint64_t sync_addr;
     ucp_rkey_h src_rkey;
     ucp_rkey_h dst_rkey;
 
-    /* pipeline buffer */
-    dpu_pipeline_t  pipeline;
+    dpu_ring_t  ring;
 
     /* remote eps */
     int world_rank;
     int world_size;
     uint64_t team_rank;
     uint32_t team_size;
-    ucp_ep_h *host_eps;
-    ucp_ep_h *dpu_eps;
-    host_rkey_t *host_rkeys;
-    ucp_rkey_h *host_src_rkeys;
-    ucp_rkey_h *host_dst_rkeys;
+    // ucp_ep_h *host_eps;
+
+    // host_rkey_t *host_rkeys;
+    // ucp_rkey_h *host_src_rkeys;
+    // ucp_rkey_h *host_dst_rkeys;
+
+    host_rkey_t host_vec_rkeys;
+    ucp_rkey_h host_src_vec_rkey;
+    ucp_rkey_h host_dst_vec_rkey;
 
     /* Multi-rail support */
     int rail;
     int dpu_per_node_cnt;
-    int window_size;
 
     /* global visibility of collectives */
-    dpu_put_sync_t *world_lsyncs;
+    // dpu_put_sync_t *world_lsyncs;
 } dpu_hc_t;
 
 int dpu_hc_init(dpu_hc_t *dpu_hc);
@@ -222,19 +240,19 @@ typedef struct thread_ctx_t {
 
 /* thread accisble data - split reader/writer */
 typedef struct thread_sync_t {
-    volatile unsigned int todo;
-    volatile unsigned int done;
-    volatile dpu_buf_t *accbuf;
-    volatile dpu_buf_t *getbuf;
+    uint32_t pad[7]; //64 cache line size
+    volatile uint32_t todo;
+    uint32_t pad2[7];
+    volatile uint32_t done;
 } thread_sync_t;
 
 extern thread_sync_t *thread_main_sync;
 extern thread_sync_t *thread_sub_sync;
 
-ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *getbuf, thread_ctx_t *ctx);
-ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *accbuf, thread_ctx_t *ctx);
-ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, thread_ctx_t *ctx, dpu_stage_t *stage, dpu_buf_t *accbuf, dpu_buf_t *getbuf);
-ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
+// ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *getbuf, thread_ctx_t *ctx);
+// ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *accbuf, thread_ctx_t *ctx);
+// ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, thread_ctx_t *ctx, dpu_stage_t *stage, dpu_buf_t *accbuf, dpu_buf_t *getbuf);
+ucs_status_t dpu_hc_ring_allreduce(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 ucs_status_t dpu_hc_issue_hangup(dpu_hc_t *dpu_hc, dpu_put_sync_t *sync, thread_ctx_t *ctx);
 ucs_status_t dpu_send_init_completion(dpu_hc_t *hc);
 
