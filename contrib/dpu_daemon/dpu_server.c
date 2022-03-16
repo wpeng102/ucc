@@ -750,7 +750,7 @@ int main(int argc, char **argv)
 {
     dpu_ucc_global_t ucc_glob;
     dpu_hc_t         hc;
-    dpu_get_sync_t   coll_sync;
+    dpu_get_sync_t   coll_sync = {0};
     char *s = NULL;
 
     int omp_threads = 6;
@@ -764,39 +764,42 @@ int main(int argc, char **argv)
 
     UCC_CHECK(dpu_ucc_init(argc, argv, &ucc_glob));
     UCC_CHECK(dpu_hc_init(&hc));
-    UCC_CHECK(dpu_hc_accept(&hc));
-
     hc.window_size = window_size;
-    printf("Host channel is intialized \n");
 
-    memset(&coll_sync, 0, sizeof(coll_sync));
+    while (1) {
+        UCC_CHECK(dpu_hc_accept_job(&hc));
+        UCS_CHECK(dpu_send_init_completion(&hc));
 
-    thread_ctx_t worker_ctx = {
-        .idx = THREAD_IDX_WORKER,
-        .hc = &hc,
-        .coll_sync = &coll_sync,
-    };
-    UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &worker_ctx.comm));
-    pthread_create(&worker_ctx.id, NULL, dpu_worker_thread, &worker_ctx);
+        thread_ctx_t worker_ctx = {
+            .idx = THREAD_IDX_WORKER,
+            .hc = &hc,
+            .coll_sync = &coll_sync,
+        };
+        UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &worker_ctx.comm));
+        pthread_create(&worker_ctx.id, NULL, dpu_worker_thread, &worker_ctx);
 
-    thread_ctx_t comm_ctx = {
-        .idx = THREAD_IDX_COMM,
-        .hc = &hc,
-        .coll_sync = &coll_sync,
-    };
-    UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx.comm));
-    pthread_create(&comm_ctx.id, NULL, dpu_comm_thread, &comm_ctx);
+        thread_ctx_t comm_ctx = {
+            .idx = THREAD_IDX_COMM,
+            .hc = &hc,
+            .coll_sync = &coll_sync,
+        };
+        UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx.comm));
+        pthread_create(&comm_ctx.id, NULL, dpu_comm_thread, &comm_ctx);
 
-    UCS_CHECK(dpu_send_init_completion(&hc));
+        pthread_join(worker_ctx.id, NULL);
+        pthread_join(comm_ctx.id, NULL);
 
-    pthread_join(worker_ctx.id, NULL);
-    pthread_join(comm_ctx.id, NULL);
-
-    dpu_ucc_free_team(&ucc_glob, &worker_ctx.comm);
-    dpu_ucc_free_team(&ucc_glob, &comm_ctx.comm);
+        dpu_ucc_free_team(&ucc_glob, &worker_ctx.comm);
+        dpu_ucc_free_team(&ucc_glob, &comm_ctx.comm);
+        
+        dpu_hc_reset_job(&hc);
+        memset(&coll_sync, 0, sizeof(coll_sync));
+        memset(&tmp_sync,  0, sizeof(tmp_sync));
+        memset(thread_main_sync, 0, sizeof(thread_sync_t));
+        memset(thread_sub_sync,  0, sizeof(thread_sync_t));
+    }
 
     dpu_hc_finalize(&hc);
-    printf("Host channel is finalized \n");
     dpu_ucc_finalize(&ucc_glob);
     return 0;
 }

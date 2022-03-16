@@ -487,7 +487,7 @@ ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request
     return status;
 }
 
-int dpu_hc_accept(dpu_hc_t *hc)
+int dpu_hc_accept_job(dpu_hc_t *hc)
 {
     int ret;
     ucs_status_t status;
@@ -495,18 +495,20 @@ int dpu_hc_accept(dpu_hc_t *hc)
     void *rem_worker_addr;
     size_t rem_worker_addr_len;
 
+    hc->job_id++;
+
     /* In the call to accept(), the server is put to sleep and when for an incoming
-         * client request, the three way TCP handshake* is complete, the function accept()
-         * wakes up and returns the socket descriptor representing the client socket.
-         */
-//     fprintf (stderr, "Waiting for connection...\n");
+    * client request, the three way TCP handshake* is complete, the function accept()
+    * wakes up and returns the socket descriptor representing the client socket.
+    */
+    DPU_LOG("Waiting for connection from Job Id %d\n", hc->job_id);
     hc->connfd = accept(hc->listenfd, (struct sockaddr*)NULL, NULL);
     if (-1 == hc->connfd) {
         fprintf(stderr, "Error in accept (%s)!\n", strerror(errno));
         ret = UCC_ERR_NO_MESSAGE;
         goto err;
     }
-//     fprintf (stderr, "Connection established\n");
+    DPU_LOG("Connection established from Job Id %d\n", hc->job_id);
 
     ret = send(hc->connfd, &hc->worker_attr.address_length, sizeof(size_t), 0);
     if (-1 == ret) {
@@ -931,7 +933,7 @@ ucs_status_t dpu_send_init_completion(dpu_hc_t *hc) {
     coll_sync.coll_id = -1;
     coll_sync.count_serviced = -1;
 
-    DPU_LOG("Send initilization completion notice to host\n" );
+    printf("# Accepted Job Id %d\n", hc->job_id);
     _dpu_worker_flush(hc);
 
     ucp_worker_fence(hc->ucp_worker);
@@ -946,15 +948,23 @@ ucs_status_t dpu_send_init_completion(dpu_hc_t *hc) {
     return UCS_OK;
 }
 
-int dpu_hc_finalize(dpu_hc_t *hc)
+int dpu_hc_reset_job(dpu_hc_t *hc)
 {
     _dpu_flush_host_eps(hc);
     _dpu_worker_flush(hc);
-    _dpu_listen_cleanup(hc);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.in);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.out);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.sync);
     _dpu_close_host_eps(hc);
+    printf("# Completed Job Id %d\n", hc->job_id);
+    return UCC_OK;
+}
+
+/* TODO: call from atexit() */
+int dpu_hc_finalize(dpu_hc_t *hc)
+{
+    DPU_LOG("Finalizing DPU Server, Job Id %d\n", hc->job_id);
+    _dpu_listen_cleanup(hc);
     _dpu_ucx_fini(hc);
     return UCC_OK;
 }

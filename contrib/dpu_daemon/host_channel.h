@@ -199,6 +199,9 @@ typedef struct dpu_hc_t {
     /* Multi-rail support */
     int rail;
     int dpu_per_node_cnt;
+
+    /* Global state */
+    int job_id;
     int window_size;
 
     /* global visibility of collectives */
@@ -206,9 +209,10 @@ typedef struct dpu_hc_t {
 } dpu_hc_t;
 
 int dpu_hc_init(dpu_hc_t *dpu_hc);
-int dpu_hc_accept(dpu_hc_t *hc);
+int dpu_hc_accept_job(dpu_hc_t *hc);
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync);
 int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id);
+int dpu_hc_reset_job(dpu_hc_t *dpu_hc);
 int dpu_hc_finalize(dpu_hc_t *dpu_hc);
 
 
