@@ -261,8 +261,11 @@ static int _dpu_hc_buffer_alloc(dpu_hc_t *hc, dpu_mem_t *mem, size_t size)
         ret = UCC_ERR_NO_MESSAGE;
         goto err_map;
     }
-    assert(mem_attr.length == size);
-    assert(mem_attr.address == mem->base);
+
+    DPU_LOG("Requested to map base %p len %zu registered base %p len %zu\n",
+            mem_params.address, mem_params.length, mem_attr.address, mem_attr.length);
+    assert(mem_attr.length >= mem_params.length);
+    assert(mem_attr.address == mem_params.address);
 
     status = ucp_rkey_pack(hc->ucp_ctx, mem->memh,
                            &mem->rkey.rkey_addr,
@@ -750,13 +753,8 @@ ucs_status_t dpu_hc_issue_allreduce(dpu_hc_t *hc, thread_ctx_t *ctx, dpu_stage_t
     thread_sub_sync->accbuf = accbuf;
     thread_sub_sync->getbuf = getbuf;
 
-    int32_t *buf1 = accbuf->buf;
-    int32_t *buf2 = getbuf->buf;
-    DPU_LOG("## B4 REDUCE ACC DATA %ld %ld GET DATA %ld %ld\n", buf1[0], buf1[1], buf2[0], buf2[1]);
-
     DPU_LOG("Issue AR accbuf %p getbuf %p count %lu\n", accbuf->buf, getbuf->buf, accbuf->count);
     dpu_signal_comp_thread(ctx, thread_sub_sync);
-
     return UCS_OK;
 }
 
@@ -770,12 +768,11 @@ ucs_status_t dpu_hc_issue_hangup(dpu_hc_t *hc, dpu_put_sync_t *sync, thread_ctx_
 
 ucc_status_t dpu_check_comp_status(thread_ctx_t *ctx, thread_sync_t *sync)
 {
-    int i;
     if(!sync->accbuf || !sync->getbuf) {
         return UCC_ERR_INVALID_PARAM;
     }
     if (!sync->done) {
-            return UCC_INPROGRESS;
+        return UCC_INPROGRESS;
     }
     return UCC_OK;
 }
@@ -791,6 +788,7 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
     dpu_pipeline_t *pp = &hc->pipeline;
     uint32_t host_team_size = sync->num_ranks;
     assert(host_team_size >= 1);
+    int read_completed = 0;
 
     for (i=0; i<1; i++) {
         if (ucp_worker_progress(hc->ucp_worker)) {
@@ -809,25 +807,31 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
             stage->src_rank = stage->dst_rank = sync->host_team_rank;
             assert(stage->done_get == 0);
             dpu_hc_issue_get(hc, sync, stage, accbuf, ctx);
-        } else if (accbuf->state == SENDRECV && accbuf->count > 0) {
+            /* Issue next Get from peer host immediately since
+               read from own host only uses PCIe Link */
+            stage->phase = REDUCE;
+        }
+        break;
+        case REDUCE:
+        read_completed = 0;
+        if (getbuf->state == FREE && stage->done_get < host_team_size) {
+            dpu_hc_issue_get(hc, sync, stage, getbuf, ctx);
+        }
+        /* Progress Read from own host if needed */
+        if (accbuf->state == SENDRECV && accbuf->count > 0) {
             request = accbuf->ucp_req;
             if (_dpu_req_test(request) == UCS_OK) {
                 if (request) ucp_request_free(request);
                 accbuf->ucp_req = NULL;
                 accbuf->state = IDLE;
                 stage->done_get += 1;
-                stage->phase = REDUCE;
                 DPU_LOG("Received %ld bytes into accbuf, gets done %d\n",
                         accbuf->count, stage->done_get);
+                read_completed++;
             }
         }
-        break;
-        case REDUCE:
-        if (getbuf->state == FREE && stage->done_get < host_team_size) {
-            assert(stage->done_get > 0);
-            dpu_hc_issue_get(hc, sync, stage, getbuf, ctx);
-            // assert(getbuf->ucp_req != NULL);
-        } else if (getbuf->state == SENDRECV && getbuf->count > 0) {
+        /* Progress Read from remote host */
+        if (getbuf->state == SENDRECV && getbuf->count > 0) {
             request = getbuf->ucp_req;
             if (_dpu_req_test(request) == UCS_OK) {
                 if (request) ucp_request_free(request);
@@ -836,10 +840,12 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
                 stage->done_get += 1;
                 DPU_LOG("Received %ld bytes into getbuf[%d], gets done %d\n",
                         getbuf->count, stage->get_idx, stage->done_get);
-
-                if (stage->done_get == host_team_size) {
-                    pp->count_received += accbuf->count;
-                }
+                read_completed++;
+            }
+        }
+        if (read_completed > 0) {
+            if (stage->done_get == host_team_size) {
+                pp->count_received += accbuf->count;
             }
         }
         if (getbuf->state == IDLE && accbuf->state == IDLE) {

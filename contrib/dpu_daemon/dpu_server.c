@@ -32,6 +32,10 @@ ucc_status_t ucc_mc_reduce(const void *src1, const void *src2, void *dst,
                            size_t count, ucc_datatype_t dtype,
                            ucc_reduction_op_t op, ucc_memory_type_t mem_type);
 
+ucc_status_t ucc_mc_reduce_multi(void *src1, void *src2, void *dst, size_t n_vectors,
+                    size_t count, size_t stride, ucc_datatype_t dtype,
+                    ucc_reduction_op_t op, ucc_memory_type_t mem_type);
+
 /* TODO: include ucc_coll_utils.h */
 static inline size_t
 ucc_coll_args_get_count(const ucc_coll_args_t *args, const ucc_count_t *counts,
@@ -78,13 +82,13 @@ ucc_coll_args_get_total_count(const ucc_coll_args_t *args,
 
 static void dpu_thread_set_affinity(thread_ctx_t *ctx)
 {
-    int places = 6;
+    int places = 8;
     pthread_t thread = pthread_self();
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
 
     if (ctx->idx == THREAD_IDX_WORKER) {
-        for (int i = 0; i < places; i+=1) {
+        for (int i = 0; i < places; i+=2) {
             CPU_SET(i, &cpuset);
         }
     } else {
@@ -319,7 +323,7 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     assert(hc->dpu_per_node_cnt > 0 && hc->rail >= 0 && hc->rail < hc->dpu_per_node_cnt);
 }
 
-static void dpu_coll_do_barrier(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
+void dpu_coll_do_barrier(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     ucs_status_t status;
     ucc_coll_req_h request;
@@ -717,8 +721,10 @@ void *dpu_worker_thread(void *arg)
             assert(getbuf->state == REDUCING && getbuf->count > 0 && getbuf->ucp_req == NULL);
 
             size_t count = accbuf->count;
-            ucc_mc_reduce(accbuf->buf, getbuf->buf, accbuf->buf,
-                          count, dtype, op, UCC_MEMORY_TYPE_HOST);
+            // ucc_mc_reduce(accbuf->buf, getbuf->buf, accbuf->buf,
+            //               count, dtype, op, UCC_MEMORY_TYPE_HOST);
+            ucc_mc_reduce_multi(accbuf->buf, getbuf->buf, accbuf->buf,
+                          1, count, 0, dtype, op, UCC_MEMORY_TYPE_HOST);
             CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
                     count, ctx->hc->pipeline.count_reduced, ctx->hc->pipeline.my_count);
         done:
