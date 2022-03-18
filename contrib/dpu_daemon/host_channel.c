@@ -950,8 +950,9 @@ ucs_status_t dpu_send_init_completion(dpu_hc_t *hc) {
 
 int dpu_hc_reset_job(dpu_hc_t *hc)
 {
-    _dpu_flush_host_eps(hc);
-    _dpu_worker_flush(hc);
+    printf("# Completing Job Id %d\n", hc->job_id);
+    // _dpu_flush_host_eps(hc);
+    // _dpu_worker_flush(hc);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.in);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.out);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.sync);

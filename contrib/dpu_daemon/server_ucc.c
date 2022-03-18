@@ -20,10 +20,7 @@
 
 static ucc_status_t oob_allgather_test(void *req)
 {
-    MPI_Request request = (MPI_Request)req;
-    int         completed;
-    MPI_Test(&request, &completed, MPI_STATUS_IGNORE);
-    return completed ? UCC_OK : UCC_INPROGRESS;
+    return UCC_OK;
 }
 
 static ucc_status_t oob_allgather_free(void *req)
@@ -34,15 +31,30 @@ static ucc_status_t oob_allgather_free(void *req)
 static ucc_status_t oob_allgather(void *sbuf, void *rbuf, size_t msglen,
                                    void *oob_coll_ctx, void **req)
 {
-    MPI_Comm    comm = (MPI_Comm)oob_coll_ctx;
-    MPI_Request request;
-    MPI_Iallgather(sbuf, msglen, MPI_BYTE, rbuf, msglen, MPI_BYTE, comm,
-                   &request);
-    *req = (void *)request;
+    MPI_Comm comm = MPI_COMM_WORLD;
+    printf("oob_allgather sbuf %p rbuf %p msglen %zu\n", sbuf, rbuf, msglen);
+    MPI_Allgather(sbuf, msglen, MPI_BYTE, rbuf, msglen, MPI_BYTE, comm);
+    *req = oob_coll_ctx;
+    char msg[1024];
+
+    dpu_ucc_global_t *g = (dpu_ucc_global_t*)oob_coll_ctx;
+    dpu_hc_t *hc = g->hc;
+    ucs_status_ptr_t request;
+    ucp_tag_t req_tag = 2244, tag_mask = 0;
+    request = ucp_tag_send_nbx(hc->localhost_ep,
+            sbuf, msglen, req_tag, &hc->req_param);
+    _dpu_request_wait(hc->ucp_worker, request);
+    printf("oob_allgather sent %zu bytes\n", msglen);
+
+    request = ucp_tag_recv_nbx(hc->ucp_worker,
+            &msg, msglen, req_tag, tag_mask, &hc->req_param);
+    _dpu_request_wait(hc->ucp_worker, request);
+    printf("oob_allgather received %zu bytes\n", msglen);
+
     return UCC_OK;
 }
 
-ucc_status_t ucc_mpi_create_team_nb(dpu_ucc_comm_t *comm)
+ucc_status_t ucc_mpi_create_team_nb(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
 {
     ucc_status_t status = UCC_OK;
     /* Create UCC TEAM for comm world */
@@ -56,7 +68,7 @@ ucc_status_t ucc_mpi_create_team_nb(dpu_ucc_comm_t *comm)
             .allgather      = oob_allgather,
             .req_test       = oob_allgather_test,
             .req_free       = oob_allgather_free,
-            .coll_info      = (void*)MPI_COMM_WORLD,
+            .coll_info      = (void*)g,
             .oob_ep         = comm->g->rank,
             .n_oob_eps      = comm->g->size
         }
@@ -69,10 +81,10 @@ ucc_status_t ucc_mpi_create_team_nb(dpu_ucc_comm_t *comm)
     return status;
 }
 
-ucc_status_t ucc_mpi_create_team(dpu_ucc_comm_t *comm) {
+ucc_status_t ucc_mpi_create_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm) {
     ucc_status_t status;
     
-    status = ucc_mpi_create_team_nb(comm);
+    status = ucc_mpi_create_team_nb(g, comm);
     while (UCC_INPROGRESS == (status = ucc_team_create_test(comm->team))) {
     };
     
@@ -129,7 +141,7 @@ int dpu_ucc_alloc_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
             .allgather    = oob_allgather,
             .req_test     = oob_allgather_test,
             .req_free     = oob_allgather_free,
-            .coll_info    = (void*)MPI_COMM_WORLD,
+            .coll_info    = (void*)g,
             .oob_ep       = g->rank,
             .n_oob_eps    = g->size
         },
@@ -139,7 +151,7 @@ int dpu_ucc_alloc_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
     UCCCHECK_GOTO(ucc_context_create(g->lib, &ctx_params, ctx_config, &comm->ctx), free_ctx, status);
 
     comm->g = g;
-    UCCCHECK_GOTO(ucc_mpi_create_team(comm), free_ctx, status);
+    UCCCHECK_GOTO(ucc_mpi_create_team(g, comm), free_ctx, status);
 
     comm->team_pool[UCC_WORLD_TEAM_ID] = comm->team;
 

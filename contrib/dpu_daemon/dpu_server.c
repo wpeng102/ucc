@@ -765,6 +765,7 @@ int main(int argc, char **argv)
     UCC_CHECK(dpu_ucc_init(argc, argv, &ucc_glob));
     UCC_CHECK(dpu_hc_init(&hc));
     hc.window_size = window_size;
+    ucc_glob.hc = &hc;
 
     while (1) {
         UCC_CHECK(dpu_hc_accept_job(&hc));

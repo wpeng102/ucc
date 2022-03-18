@@ -65,47 +65,85 @@ static int _server_connect(ucc_tl_dpu_context_t *ctx, char *hname, uint16_t port
     return sock;
 }
 
-/* Wait for initilizatino completion notification from dpu */
-static inline ucc_status_t dpu_init_completion_wait(ucc_tl_dpu_context_t *ctx) {
+/* Wait for initilization completion notification from dpu */
+static ucc_status_t dpu_init_completion_wait(ucc_tl_dpu_context_t *ctx) {
 
-    int rail, received = 0;
+    int rail;
     ucp_request_param_t req_param = {0};
     ucp_tag_t req_tag = 0, tag_mask = 0; 
-    ucs_status_ptr_t recv_req[MAX_DPU_COUNT] = {0};
-    ucc_tl_dpu_get_sync_t get_sync[MAX_DPU_COUNT] = {0};
+    ucc_tl_dpu_get_sync_t get_sync = {0};
+    ucs_status_ptr_t recv_req;
     ucc_tl_dpu_connect_t *dpu_connect;
 
     for (rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
         dpu_connect = &ctx->dpu_ctx_list[rail];
-
         ucp_worker_fence(dpu_connect->ucp_worker);
-
-        recv_req[rail] = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
-                &get_sync[rail], sizeof(ucc_tl_dpu_get_sync_t), req_tag, tag_mask,
-                &req_param);
+        recv_req = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+                &get_sync, sizeof(ucc_tl_dpu_get_sync_t),
+                req_tag, tag_mask, &req_param);
+        ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, recv_req);
     }
 
-    do {
-        for (rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
+    tl_info(ctx->super.super.lib,
+            "Received completion notification from  all DPU rails\n");
+
+    return UCC_OK;
+}
+
+ucc_status_t dpu_client_oob_allgather(ucc_tl_dpu_context_t *ctx, int num_colls, size_t *msg_lens) {
+    ucp_request_param_t req_param = {0};
+    ucp_tag_t req_tag = 2244, tag_mask = 0; 
+    ucs_status_ptr_t req;
+    ucc_tl_dpu_connect_t *dpu_connect;
+    char msg[4096] = {0};
+
+    for (int i=0; i<num_colls; i++) {
+        size_t in_len = msg_lens[i];
+        size_t out_len = in_len * 1;
+        for (int rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
             dpu_connect = &ctx->dpu_ctx_list[rail];
-            ucp_worker_progress(dpu_connect->ucp_worker);
-        }
-        received = 0;
-        for (rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
-            dpu_connect = &ctx->dpu_ctx_list[rail];
-            
-            if (recv_req[rail] == NULL || (ucc_tl_dpu_req_test(&recv_req[rail],
-                            dpu_connect->ucp_worker) == UCC_OK)) {
-                received++;
-                //assert(get_sync[rail].count_serviced == -1);
-                //assert(get_sync[rail].coll_id == -1);
+            ucp_worker_fence(dpu_connect->ucp_worker);
+            req = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+                    &msg, in_len, req_tag, tag_mask, &req_param);
+            ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, req);
+            printf("oob_allgather received %zu bytes\n", in_len);
+
+            ucc_coll_args_t coll = {
+                .coll_type = UCC_COLL_TYPE_ALLGATHER,
+                .src.info = {
+                    .buffer   = &msg,
+                    .count    = in_len,
+                    .datatype = UCC_DT_INT8,
+                    .mem_type = UCC_MEMORY_TYPE_HOST,
+                },
+                .dst.info = {
+                    .buffer   = &msg,
+                    .count    = msg_lens[i] * team_size,
+                    .datatype = UCC_DT_INT8,
+                    .mem_type = UCC_MEMORY_TYPE_HOST,
+                },
+            };
+
+            CTX_LOG("Issue Allgather from ranks %d src %p dst %p bytes %lu\n",
+                    team_size, src_buf, dst_buf, sizeof(host_rkey_t));
+            UCC_CHECK(ucc_collective_init(&coll, &request, team));
+            UCC_CHECK(ucc_collective_post(request));
+            while (UCC_OK != ucc_collective_test(request)) {
+                ucc_context_progress(ctx->comm.ctx);
             }
+            UCC_CHECK(ucc_collective_finalize(request));
+
+            req = ucp_tag_send_nbx(dpu_connect->ucp_ep,
+                    &msg, out_len, req_tag, &req_param);
+            ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, req);
+            printf("oob_allgather sent %zu bytes\n", out_len);
+
+            ucp_worker_flush(dpu_connect->ucp_worker);
         }
-    } while(received != ctx->dpu_per_node_cnt);
+    }
 
     tl_info(ctx->super.super.lib,
-            "Received completion notification from  all DPU rails  \n"); 
-
+            "Performed %d allgathers on behalf of DPU\n", num_colls); 
     return UCC_OK;
 }
 
@@ -343,6 +381,11 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
     dpu_init_completion_wait(self);
 
+    /* FIXME: replace with thread */
+    int num_colls = 6;
+    size_t msg_lens[6] = {8, 120, 4, 8, 120, 4};
+    dpu_client_oob_allgather(self, num_colls, msg_lens);
+
     tl_info(self->super.super.lib, "context created for %d DPUs", dpu_count);
     return ucc_status;
 
@@ -369,6 +412,11 @@ UCC_CLASS_CLEANUP_FUNC(ucc_tl_dpu_context_t)
     int rail;
 
     tl_info(self->super.super.lib, "finalizing tl context: %p", self);
+
+    /* FIXME: replace with thread */
+    int num_colls = 2;
+    size_t msg_lens[2] = {1, 1};
+    dpu_client_oob_allgather(self, num_colls, msg_lens);
     
     for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
     
