@@ -65,31 +65,6 @@ static int _server_connect(ucc_tl_dpu_context_t *ctx, char *hname, uint16_t port
     return sock;
 }
 
-/* Wait for initilization completion notification from dpu */
-static ucc_status_t dpu_init_completion_wait(ucc_tl_dpu_context_t *ctx) {
-
-    int rail;
-    ucp_request_param_t req_param = {0};
-    ucp_tag_t req_tag = 0, tag_mask = 0; 
-    ucc_tl_dpu_get_sync_t get_sync = {0};
-    ucs_status_ptr_t recv_req;
-    ucc_tl_dpu_connect_t *dpu_connect;
-
-    for (rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
-        dpu_connect = &ctx->dpu_ctx_list[rail];
-        ucp_worker_fence(dpu_connect->ucp_worker);
-        recv_req = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
-                &get_sync, sizeof(ucc_tl_dpu_get_sync_t),
-                req_tag, tag_mask, &req_param);
-        ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, recv_req);
-    }
-
-    tl_info(ctx->super.super.lib,
-            "Received completion notification from  all DPU rails\n");
-
-    return UCC_OK;
-}
-
 UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
                     const ucc_base_context_params_t *params,
                     const ucc_base_config_t *config)
@@ -337,8 +312,6 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     }
 
     self->dpu_per_node_cnt = dpu_count;
-
-    dpu_init_completion_wait(self);
 
     tl_info(self->super.super.lib, "context created for %d DPUs", dpu_count);
     return ucc_status;

@@ -386,18 +386,73 @@ out:
     return ret;
 }
 
-static ucs_status_t _dpu_create_host_eps(dpu_hc_t *hc, void *rem_worker_addr, size_t rem_worker_addr_len)
+static void dpu_coll_collect_host_addrs(dpu_ucc_comm_t *comm, void *addr, size_t addr_len, void *outbuf)
+{
+    ucs_status_t status;
+    ucc_coll_req_h request;
+    ucc_team_h team = comm->team;
+    ucc_rank_t team_size = 0;
+    UCC_CHECK(ucc_team_get_size(team, &team_size));
+        
+    ucc_coll_args_t coll = {
+        .coll_type = UCC_COLL_TYPE_ALLGATHER,
+        .src.info = {
+            .buffer   = addr,
+            .count    = addr_len,
+            .datatype = UCC_DT_INT8,
+            .mem_type = UCC_MEMORY_TYPE_HOST,
+        },
+        .dst.info = {
+            .buffer   = outbuf,
+            .count    = addr_len * team_size,
+            .datatype = UCC_DT_INT8,
+            .mem_type = UCC_MEMORY_TYPE_HOST,
+        },
+    };
+
+    DPU_LOG("Issue Allgather from ranks %d src %p dst %p bytes %lu\n",
+            team_size, addr, outbuf, addr_len);
+    UCC_CHECK(ucc_collective_init(&coll, &request, team));
+    UCC_CHECK(ucc_collective_post(request));
+    while (UCC_OK != ucc_collective_test(request)) {
+        ucc_context_progress(comm->ctx);
+    }
+    UCC_CHECK(ucc_collective_finalize(request));
+}
+
+int dpu_hc_connect_localhost_ep(dpu_hc_t *hc)
+{
+    ucs_status_t status;
+    ucp_ep_params_t ep_params;
+    ep_params.field_mask    = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
+                              UCP_EP_PARAM_FIELD_ERR_HANDLER |
+                              UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
+    ep_params.err_mode		= UCP_ERR_HANDLING_MODE_PEER;
+    ep_params.err_handler.cb    = err_cb;
+    ep_params.address = hc->rem_worker_addr;
+
+    status = ucp_ep_create(hc->ucp_worker, &ep_params, &hc->localhost_ep);
+    if (status != UCS_OK) {
+        fprintf(stderr, "failed to create endpoint on dpu to local host %d (%s)\n",
+                ucs_status_string(status));
+    }
+
+    return status;
+}
+
+static ucs_status_t _dpu_create_remote_host_eps(dpu_hc_t *hc, dpu_ucc_comm_t *comm)
 {
     ucs_status_t status;
     ucp_ep_params_t ep_params;
     int i;
     void *remote_addrs = NULL;
+    size_t rem_worker_addr_len = hc->rem_worker_addr_len;
+    void *rem_worker_addr = hc->rem_worker_addr;
 
-    /* Connect to all remote hosts */
+    /* Allgather Host EP addresses */
     hc->host_eps = calloc(hc->world_size, sizeof(ucp_ep_h));
     remote_addrs = calloc(hc->world_size, rem_worker_addr_len);
-    MPI_Allgather(rem_worker_addr, rem_worker_addr_len, MPI_BYTE,
-                  remote_addrs, rem_worker_addr_len, MPI_BYTE, MPI_COMM_WORLD);
+    dpu_coll_collect_host_addrs(comm, rem_worker_addr, rem_worker_addr_len, remote_addrs);
 
     ep_params.field_mask    = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
                               UCP_EP_PARAM_FIELD_ERR_HANDLER |
@@ -405,7 +460,14 @@ static ucs_status_t _dpu_create_host_eps(dpu_hc_t *hc, void *rem_worker_addr, si
     ep_params.err_mode		= UCP_ERR_HANDLING_MODE_PEER;
     ep_params.err_handler.cb    = err_cb;
 
+    /* Connect to all remote hosts */
     for (i = 0; i < hc->world_size; i++) {
+        /* Skip Local Host, Already Connected */
+        if (i == hc->world_rank) {
+            hc->host_eps[i] = hc->localhost_ep;
+            continue;
+        }
+
         ep_params.address = remote_addrs + i * rem_worker_addr_len;
         status = ucp_ep_create(hc->ucp_worker, &ep_params, &hc->host_eps[i]);
         if (status != UCS_OK) {
@@ -415,7 +477,6 @@ static ucs_status_t _dpu_create_host_eps(dpu_hc_t *hc, void *rem_worker_addr, si
         }
     }
 
-    hc->localhost_ep = hc->host_eps[hc->world_rank];
     hc->host_rkeys = calloc(hc->world_size, sizeof(host_rkey_t));
     hc->host_src_rkeys = calloc(hc->world_size, sizeof(ucp_rkey_h));
     hc->host_dst_rkeys = calloc(hc->world_size, sizeof(ucp_rkey_h));
@@ -487,11 +548,6 @@ ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request
 int dpu_hc_accept_job(dpu_hc_t *hc)
 {
     int ret;
-    ucs_status_t status;
-    ucp_rkey_h client_rkey_h;
-    void *rem_worker_addr;
-    size_t rem_worker_addr_len;
-
     hc->job_id++;
 
     /* In the call to accept(), the server is put to sleep and when for an incoming
@@ -514,24 +570,22 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
         goto err;
     }
 
-    ret = send(hc->connfd, hc->worker_attr.address,
-               hc->worker_attr.address_length, 0);
+    ret = send(hc->connfd, hc->worker_attr.address, hc->worker_attr.address_length, 0);
     if (-1 == ret) {
         fprintf(stderr, "send worker_address failed!\n");
         ret = UCC_ERR_NO_MESSAGE;
         goto err;
     }
 
-    ret = recv(hc->connfd, &rem_worker_addr_len, sizeof(size_t), MSG_WAITALL);
+    ret = recv(hc->connfd, &hc->rem_worker_addr_len, sizeof(size_t), MSG_WAITALL);
     if (-1 == ret) {
         fprintf(stderr, "recv address_length failed!\n");
         ret = UCC_ERR_NO_MESSAGE;
         goto err;
     }
 
-    rem_worker_addr = calloc(1, rem_worker_addr_len);
-
-    ret = recv(hc->connfd, rem_worker_addr, rem_worker_addr_len, MSG_WAITALL);
+    hc->rem_worker_addr = calloc(1, hc->rem_worker_addr_len);
+    ret = recv(hc->connfd, hc->rem_worker_addr, hc->rem_worker_addr_len, MSG_WAITALL);
     if (-1 == ret) {
         fprintf(stderr, "recv worker address failed!\n");
         ret = UCC_ERR_NO_MESSAGE;
@@ -539,7 +593,6 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
     }
 
     memset(&hc->pipeline, 0, sizeof(hc->pipeline));
-
     ret = recv(hc->connfd, &hc->pipeline.buffer_size, sizeof(size_t), MSG_WAITALL);
     if (-1 == ret) {
         fprintf(stderr, "recv pipeline buffer size failed!\n");
@@ -575,9 +628,19 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
     }
 
     printf("Job Id %d rank %d size %d\n", hc->job_id, hc->world_rank, hc->world_size);
+    ret = 0;
 
-    if (ret = _dpu_create_host_eps(hc, rem_worker_addr, rem_worker_addr_len)) {
-        fprintf(stderr, "_dpu_create_host_eps failed!\n");
+err:
+    close(hc->connfd);
+    return ret;
+}
+
+int dpu_hc_connect_remote_hosts(dpu_hc_t *hc, dpu_ucc_comm_t *comm)
+{
+    int ret;
+
+    if (ret = _dpu_create_remote_host_eps(hc, comm)) {
+        fprintf(stderr, "_dpu_create_remote_host_eps failed!\n");
         ret = UCC_ERR_NO_MESSAGE;
         goto err;
     }
@@ -587,10 +650,8 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
         fprintf(stderr, "ep flush failed!\n");
         goto err;
     }
-    return ret;
 
 err:
-    close(hc->connfd);
     return ret;
 }
 
@@ -933,8 +994,8 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
 
 }
 
-ucs_status_t dpu_send_init_completion(dpu_hc_t *hc) {
-
+ucs_status_t dpu_send_init_completion(dpu_hc_t *hc)
+{
     ucs_status_t status;
     ucp_tag_t req_tag = 0;
     ucs_status_ptr_t request;
@@ -974,7 +1035,7 @@ int dpu_hc_reset_job(dpu_hc_t *hc)
 /* TODO: call from atexit() */
 int dpu_hc_finalize(dpu_hc_t *hc)
 {
-    DPU_LOG("Finalizing DPU Server, Job Id %d\n", hc->job_id);
+    printf("Finalizing DPU Server, Job Id %d\n", hc->job_id);
     _dpu_listen_cleanup(hc);
     _dpu_ucx_fini(hc);
     return UCC_OK;

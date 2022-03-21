@@ -56,6 +56,32 @@ static ucc_status_t _dpu_client_oob_allgather(ucc_tl_dpu_team_t *team, int num_c
     return UCC_OK;
 }
 
+/* Wait for initilization completion notification from dpu */
+static ucc_status_t _dpu_init_completion_wait(ucc_tl_dpu_team_t *team)
+{
+    int rail;
+    ucp_request_param_t req_param = {0};
+    ucp_tag_t req_tag = 0, tag_mask = 0; 
+    ucc_tl_dpu_get_sync_t get_sync = {0};
+    ucs_status_ptr_t recv_req;
+    ucc_tl_dpu_connect_t *dpu_connect;
+    ucc_tl_dpu_context_t    *ctx = UCC_TL_DPU_TEAM_CTX(team);
+
+    for (rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
+        dpu_connect = &ctx->dpu_ctx_list[rail];
+        ucp_worker_fence(dpu_connect->ucp_worker);
+        recv_req = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+                &get_sync, sizeof(ucc_tl_dpu_get_sync_t),
+                req_tag, tag_mask, &req_param);
+        ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, recv_req);
+    }
+
+    tl_info(ctx->super.super.lib,
+            "Received completion notification from  all DPU rails\n");
+
+    return UCC_OK;
+}
+
 ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team, int rail)
 {
     ucc_tl_dpu_context_t    *ctx = UCC_TL_DPU_TEAM_CTX(team);
@@ -140,6 +166,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
             int    num_colls   = 4;
             size_t msg_lens[4] = {8, 120, 8, 120};
             _dpu_client_oob_allgather(self, num_colls, msg_lens);
+            _dpu_init_completion_wait(self);
         }
 
         /*  avoid preparing the get_sync for teams other than world */

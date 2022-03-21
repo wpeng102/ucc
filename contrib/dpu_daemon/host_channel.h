@@ -167,6 +167,7 @@ typedef struct dpu_hc_t {
     char *ip;
     int connfd, listenfd;
     uint16_t port;
+
     /* Local UCX stuff */
     ucp_context_h ucp_ctx;
     ucp_worker_h ucp_worker;
@@ -176,7 +177,10 @@ typedef struct dpu_hc_t {
         dpu_mem_segs_t mem_segs;
         dpu_mem_t mem_segs_array[3];
     };
+
     /* Remote UCX stuff */
+    void *rem_worker_addr;
+    size_t rem_worker_addr_len;
     ucp_ep_h localhost_ep;
     uint64_t sync_addr;
     ucp_rkey_h src_rkey;
@@ -210,6 +214,8 @@ typedef struct dpu_hc_t {
 
 int dpu_hc_init(dpu_hc_t *dpu_hc);
 int dpu_hc_accept_job(dpu_hc_t *hc);
+int dpu_hc_connect_localhost_ep(dpu_hc_t *hc);
+int dpu_hc_connect_remote_hosts(dpu_hc_t *hc, dpu_ucc_comm_t *comm);
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync);
 int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id);
 int dpu_hc_reset_job(dpu_hc_t *dpu_hc);

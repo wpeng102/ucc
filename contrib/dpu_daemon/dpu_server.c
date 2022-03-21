@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "server_ucc.h"
 #include "host_channel.h"
@@ -746,6 +747,13 @@ void *dpu_worker_thread(void *arg)
     return NULL;
 }
 
+void _cleanup(int status, void *arg)
+{
+    dpu_ucc_global_t *g = (dpu_ucc_global_t*)arg;
+    dpu_hc_finalize(g->hc);
+    dpu_ucc_finalize(g);
+}
+
 int main(int argc, char **argv)
 {
     dpu_ucc_global_t ucc_glob;
@@ -766,27 +774,33 @@ int main(int argc, char **argv)
     UCC_CHECK(dpu_hc_init(&hc));
     hc.window_size = window_size;
     ucc_glob.hc = &hc;
+    on_exit(_cleanup, &ucc_glob);
 
     while (1) {
         UCC_CHECK(dpu_hc_accept_job(&hc));
-        UCS_CHECK(dpu_send_init_completion(&hc));
+        UCS_CHECK(dpu_hc_connect_localhost_ep(&hc));
 
         thread_ctx_t worker_ctx = {
             .idx = THREAD_IDX_WORKER,
             .hc = &hc,
             .coll_sync = &coll_sync,
         };
-        UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &worker_ctx.comm));
-        pthread_create(&worker_ctx.id, NULL, dpu_worker_thread, &worker_ctx);
 
         thread_ctx_t comm_ctx = {
             .idx = THREAD_IDX_COMM,
             .hc = &hc,
             .coll_sync = &coll_sync,
         };
+
+        UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &worker_ctx.comm));
         UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx.comm));
+        dpu_hc_connect_remote_hosts(&hc, &comm_ctx.comm);
+        UCS_CHECK(dpu_send_init_completion(&hc));
+        
+        pthread_create(&worker_ctx.id, NULL, dpu_worker_thread, &worker_ctx);
         pthread_create(&comm_ctx.id, NULL, dpu_comm_thread, &comm_ctx);
 
+        
         pthread_join(worker_ctx.id, NULL);
         pthread_join(comm_ctx.id, NULL);
 
@@ -800,7 +814,5 @@ int main(int argc, char **argv)
         memset(thread_sub_sync,  0, sizeof(thread_sync_t));
     }
 
-    dpu_hc_finalize(&hc);
-    dpu_ucc_finalize(&ucc_glob);
     return 0;
 }
