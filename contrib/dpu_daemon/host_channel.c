@@ -363,10 +363,7 @@ out:
 int dpu_hc_init(dpu_hc_t *hc)
 {
     int ret = UCC_OK;
-
     memset(hc, 0, sizeof(*hc));
-    MPI_Comm_rank(MPI_COMM_WORLD, &hc->world_rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &hc->world_size);
 
     /* Start listening */
     ret = _dpu_listen(hc);
@@ -521,7 +518,6 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
                hc->worker_attr.address_length, 0);
     if (-1 == ret) {
         fprintf(stderr, "send worker_address failed!\n");
-        fprintf(stderr, "mmap_buffer failed!\n");
         ret = UCC_ERR_NO_MESSAGE;
         goto err;
     }
@@ -542,14 +538,6 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
         goto err;
     }
 
-
-    if (ret = _dpu_create_host_eps(hc, rem_worker_addr, rem_worker_addr_len)) {
-        fprintf(stderr, "_dpu_create_host_eps failed!\n");
-        ret = UCC_ERR_NO_MESSAGE;
-        goto err;
-    }
-
-
     memset(&hc->pipeline, 0, sizeof(hc->pipeline));
 
     ret = recv(hc->connfd, &hc->pipeline.buffer_size, sizeof(size_t), MSG_WAITALL);
@@ -569,6 +557,28 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
     ret = _dpu_hc_init_pipeline(hc);
     if (ret) {
         fprintf(stderr, "init pipeline failed!\n");
+        goto err;
+    }
+
+    ret = recv(hc->connfd, &hc->world_rank, sizeof(uint32_t), MSG_WAITALL);
+    if (-1 == ret) {
+        fprintf(stderr, "recv world rank failed!\n");
+        ret = UCC_ERR_NO_MESSAGE;
+        goto err;
+    }
+
+    ret = recv(hc->connfd, &hc->world_size, sizeof(uint32_t), MSG_WAITALL);
+    if (-1 == ret) {
+        fprintf(stderr, "recv world size failed!\n");
+        ret = UCC_ERR_NO_MESSAGE;
+        goto err;
+    }
+
+    printf("Job Id %d rank %d size %d\n", hc->job_id, hc->world_rank, hc->world_size);
+
+    if (ret = _dpu_create_host_eps(hc, rem_worker_addr, rem_worker_addr_len)) {
+        fprintf(stderr, "_dpu_create_host_eps failed!\n");
+        ret = UCC_ERR_NO_MESSAGE;
         goto err;
     }
 

@@ -9,6 +9,52 @@
 #include "../../../core/ucc_team.h"
 #include "tl_dpu_coll.h"
 #include "coll_score/ucc_coll_score.h"
+#include "../../../core/ucc_service_coll.h"
+
+static ucc_status_t _dpu_client_oob_allgather(ucc_tl_dpu_team_t *team, int num_colls, size_t *msg_lens)
+{
+    ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(team);
+    ucc_team_t *ucc_team = team->super.super.params.team;
+
+    ucp_request_param_t req_param = {0};
+    ucp_tag_t req_tag = 2244, tag_mask = 0; 
+    ucs_status_ptr_t req;
+    ucc_rank_t team_size = team->size;
+    ucc_subset_t subset = {.map.type   = UCC_EP_MAP_FULL,
+                           .map.ep_num = team->size,
+                           .myrank     = team->rank};
+    ucc_tl_dpu_connect_t *dpu_connect;
+    char msg[4096] = {0};
+
+    for (int i=0; i<num_colls; i++) {
+        size_t in_len = msg_lens[i];
+        size_t out_len = in_len * team_size;
+        for (int rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
+            dpu_connect = &ctx->dpu_ctx_list[rail];
+            ucp_worker_fence(dpu_connect->ucp_worker);
+            req = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+                    &msg, in_len, req_tag, tag_mask, &req_param);
+            ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, req);
+            printf("oob_allgather received %zu bytes\n", in_len);
+
+            ucc_service_coll_req_t *request;
+            ucc_service_allgather(ucc_team, msg, msg, in_len, subset, &request);
+            while (UCC_OK != ucc_service_coll_test(request)) {};
+            ucc_service_coll_finalize(request);
+
+            req = ucp_tag_send_nbx(dpu_connect->ucp_ep,
+                    &msg, out_len, req_tag, &req_param);
+            ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, req);
+            printf("oob_allgather sent %zu bytes\n", out_len);
+
+            ucp_worker_flush(dpu_connect->ucp_worker);
+        }
+    }
+
+    tl_info(ctx->super.super.lib,
+            "Performed %d allgathers on behalf of DPU\n", num_colls); 
+    return UCC_OK;
+}
 
 ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team, int rail)
 {
@@ -89,6 +135,13 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
         dpu_sync->coll_id_completed   = 0;
         dpu_sync->status              = UCC_OPERATION_INITIALIZED;
 
+        /* Execute oob allgather on behalf of DPU */
+        if (params->id == UCC_WORLD_TEAM_ID) {
+            int    num_colls   = 4;
+            size_t msg_lens[4] = {8, 120, 8, 120};
+            _dpu_client_oob_allgather(self, num_colls, msg_lens);
+        }
+
         /*  avoid preparing the get_sync for teams other than world */
         if (params->id != UCC_WORLD_TEAM_ID) {
             ucc_status =  ucc_tl_dpu_new_team_create_test(self, rail);
@@ -100,7 +153,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
             } else {
                 continue;
             }
-        }   
+        }
     }
 
     return ucc_status;
@@ -155,6 +208,13 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
         ucs_status_ptr_t request = ucp_worker_flush_nbx(dpu_connect->ucp_worker, &req_param);
         ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, request);
         dpu_sync->coll_id_completed = ++dpu_connect->coll_id_completed;
+
+        /* Execute oob allgather on behalf of DPU */
+        if (team_id == UCC_WORLD_TEAM_ID) {
+            int num_colls = 2;
+            size_t msg_lens[2] = {1, 1};
+            _dpu_client_oob_allgather(team, num_colls, msg_lens);
+        }
     }
     
     UCC_CLASS_DELETE_FUNC_NAME(ucc_tl_dpu_team_t)(tl_team);

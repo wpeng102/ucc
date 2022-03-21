@@ -414,7 +414,7 @@ static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     int i = 0, idx = 0, rail = 0;
     int team_id = lsync->team_id;
     ucc_rank_t dpu_team_size, host_team_size = lsync->num_ranks;
-    ucc_rank_t full_size = ctx->comm.g->size;
+    ucc_rank_t full_size = ctx->hc->world_size;
     ucc_team_h new_team = NULL;
     ucc_team_params_t team_params = {0};
     ucc_status_t status;
@@ -444,7 +444,7 @@ static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 
     /* find my new rank in the new team */
     for(i = 0; i < dpu_team_size; i++) {
-        if (dpu_rank_list[i] == ctx->comm.g->rank) {
+        if (dpu_rank_list[i] == ctx->hc->world_rank) {
             break;
         }
     }

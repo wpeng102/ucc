@@ -186,8 +186,8 @@ typedef struct dpu_hc_t {
     dpu_pipeline_t  pipeline;
 
     /* remote eps */
-    int world_rank;
-    int world_size;
+    uint32_t world_rank;
+    uint32_t world_size;
     uint64_t team_rank;
     uint32_t team_size;
     ucp_ep_h *host_eps;

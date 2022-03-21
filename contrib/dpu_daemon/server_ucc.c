@@ -7,17 +7,6 @@
 #include "host_channel.h"
 #include <assert.h>
 
-// typedef struct ucc_test_oob_allgather_req {
-//     ucc_ep_range_t range;
-//     void *sbuf;
-//     void *rbuf;
-//     void *oob_coll_ctx;
-//     int my_rank;
-//     size_t msglen;
-//     int iter;
-//     MPI_Request reqs[2];
-// } ucc_test_oob_allgather_req_t;
-
 static ucc_status_t oob_allgather_test(void *req)
 {
     return UCC_OK;
@@ -31,14 +20,11 @@ static ucc_status_t oob_allgather_free(void *req)
 static ucc_status_t oob_allgather(void *sbuf, void *rbuf, size_t msglen,
                                    void *oob_coll_ctx, void **req)
 {
-    MPI_Comm comm = MPI_COMM_WORLD;
     printf("oob_allgather sbuf %p rbuf %p msglen %zu\n", sbuf, rbuf, msglen);
-    MPI_Allgather(sbuf, msglen, MPI_BYTE, rbuf, msglen, MPI_BYTE, comm);
-    *req = oob_coll_ctx;
-    char msg[1024];
 
     dpu_ucc_global_t *g = (dpu_ucc_global_t*)oob_coll_ctx;
     dpu_hc_t *hc = g->hc;
+    size_t inlen = msglen * g->hc->world_size;
     ucs_status_ptr_t request;
     ucp_tag_t req_tag = 2244, tag_mask = 0;
     request = ucp_tag_send_nbx(hc->localhost_ep,
@@ -47,44 +33,34 @@ static ucc_status_t oob_allgather(void *sbuf, void *rbuf, size_t msglen,
     printf("oob_allgather sent %zu bytes\n", msglen);
 
     request = ucp_tag_recv_nbx(hc->ucp_worker,
-            &msg, msglen, req_tag, tag_mask, &hc->req_param);
+            rbuf, inlen, req_tag, tag_mask, &hc->req_param);
     _dpu_request_wait(hc->ucp_worker, request);
     printf("oob_allgather received %zu bytes\n", msglen);
 
+    *req = NULL;
     return UCC_OK;
 }
 
-ucc_status_t ucc_mpi_create_team_nb(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
+static ucc_status_t dpu_create_world_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
 {
+    int world_rank = g->hc->world_rank;
+    int world_size = g->hc->world_size;
     ucc_status_t status = UCC_OK;
+
     /* Create UCC TEAM for comm world */
     ucc_team_params_t team_params = {
         .mask   = UCC_TEAM_PARAM_FIELD_EP |
                   UCC_TEAM_PARAM_FIELD_EP_RANGE |
-                  UCC_TEAM_PARAM_FIELD_OOB,
-        .ep     = comm->g->rank,
+                  UCC_TEAM_PARAM_FIELD_EP_MAP,
+        .ep     = world_rank,
         .ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG,
-        .oob   = {
-            .allgather      = oob_allgather,
-            .req_test       = oob_allgather_test,
-            .req_free       = oob_allgather_free,
-            .coll_info      = (void*)g,
-            .oob_ep         = comm->g->rank,
-            .n_oob_eps      = comm->g->size
-        }
+        .ep_map = {
+            .type = UCC_EP_MAP_FULL,
+            .ep_num = world_size,
+        },
     };
 
-    assert(comm->g->size > 0);
-
     status = ucc_team_create_post(&comm->ctx, 1, &team_params, &comm->team);
-
-    return status;
-}
-
-ucc_status_t ucc_mpi_create_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm) {
-    ucc_status_t status;
-    
-    status = ucc_mpi_create_team_nb(g, comm);
     while (UCC_INPROGRESS == (status = ucc_team_create_test(comm->team))) {
     };
     
@@ -97,18 +73,13 @@ int dpu_ucc_init(int argc, char **argv, dpu_ucc_global_t *g)
     char *var;
 
     MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &g->rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &g->size);
 
     UCCCHECK_GOTO(ucc_lib_config_read("DPU_DAEMON", NULL, &g->lib_config),
                     exit_err, status);
 
     ucc_lib_params_t lib_params = {
-        .mask = UCC_LIB_PARAM_FIELD_THREAD_MODE |
-                UCC_LIB_PARAM_FIELD_COLL_TYPES,
+        .mask = UCC_LIB_PARAM_FIELD_THREAD_MODE,
         .thread_mode = UCC_THREAD_MULTIPLE,
-                /* TODO: support more collectives */
-        .coll_types  = UCC_COLL_TYPE_ALLREDUCE | UCC_COLL_TYPE_ALLTOALL,
     };
 
     UCCCHECK_GOTO(ucc_init(&lib_params, g->lib_config, &g->lib),
@@ -136,14 +107,14 @@ int dpu_ucc_alloc_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
     ucc_context_params_t ctx_params = {
         .mask   = UCC_CONTEXT_PARAM_FIELD_TYPE |
                   UCC_CONTEXT_PARAM_FIELD_OOB,
-        .type   = UCC_CONTEXT_EXCLUSIVE,
+        .type   = UCC_CONTEXT_SHARED,
         .oob = {
             .allgather    = oob_allgather,
             .req_test     = oob_allgather_test,
             .req_free     = oob_allgather_free,
             .coll_info    = (void*)g,
-            .oob_ep       = g->rank,
-            .n_oob_eps    = g->size
+            .oob_ep       = g->hc->world_rank,
+            .n_oob_eps    = g->hc->world_size,
         },
     };
     ucc_context_config_h ctx_config;
@@ -151,8 +122,7 @@ int dpu_ucc_alloc_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
     UCCCHECK_GOTO(ucc_context_create(g->lib, &ctx_params, ctx_config, &comm->ctx), free_ctx, status);
 
     comm->g = g;
-    UCCCHECK_GOTO(ucc_mpi_create_team(g, comm), free_ctx, status);
-
+    UCCCHECK_GOTO(dpu_create_world_team(g, comm), free_ctx, status);
     comm->team_pool[UCC_WORLD_TEAM_ID] = comm->team;
 
     return status;

@@ -48,8 +48,6 @@ typedef struct {
     ucc_team_h          ucc_world_team;
     ucc_lib_h           lib;
     ucc_lib_config_h    lib_config;
-    int rank;
-    int size;
     struct dpu_hc_t *hc;
 } dpu_ucc_global_t;
 
