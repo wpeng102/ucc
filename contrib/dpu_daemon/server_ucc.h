@@ -3,14 +3,13 @@
  * See file LICENSE for terms.
  */
 
-#ifndef TEST_MPI_H
-#define TEST_MPI_H
+#ifndef SERVER_UCC_H
+#define SERVER_UCC_H
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <mpi.h>
 
 #include <ucc/api/ucc.h>
 
@@ -18,12 +17,10 @@
 
 #define UCS_CHECK(_call) if (UCS_OK != (_call)) {              \
         fprintf(stderr, "*** UCS TEST FAIL: %s\n", STR(_call)); \
-        MPI_Abort(MPI_COMM_WORLD, -1);                           \
     }
 
 #define UCC_CHECK(_call) if (UCC_OK != (_call)) {              \
         fprintf(stderr, "*** UCC TEST FAIL: %s\n", STR(_call)); \
-        MPI_Abort(MPI_COMM_WORLD, -1);                           \
     }
 
 #define UCCCHECK_GOTO(_call, _label, _status)                                  \

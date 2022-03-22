@@ -20,13 +20,13 @@ static ucc_status_t oob_allgather_free(void *req)
 static ucc_status_t oob_allgather(void *sbuf, void *rbuf, size_t msglen,
                                    void *oob_coll_ctx, void **req)
 {
-    printf("oob_allgather sbuf %p rbuf %p msglen %zu\n", sbuf, rbuf, msglen);
+    DPU_LOG("oob_allgather sbuf %p rbuf %p msglen %zu\n", sbuf, rbuf, msglen);
 
     dpu_ucc_global_t *g = (dpu_ucc_global_t*)oob_coll_ctx;
     dpu_hc_t *hc = g->hc;
     size_t inlen = msglen * g->hc->world_size;
     ucs_status_ptr_t request;
-    ucp_tag_t req_tag = 2244, tag_mask = 0;
+    ucp_tag_t req_tag = 0, tag_mask = 0;
     request = ucp_tag_send_nbx(hc->localhost_ep,
             sbuf, msglen, req_tag, &hc->req_param);
     _dpu_request_wait(hc->ucp_worker, request);
@@ -71,8 +71,6 @@ int dpu_ucc_init(int argc, char **argv, dpu_ucc_global_t *g)
 {
     ucc_status_t status;
     char *var;
-
-    MPI_Init(&argc, &argv);
 
     UCCCHECK_GOTO(ucc_lib_config_read("DPU_DAEMON", NULL, &g->lib_config),
                     exit_err, status);
@@ -142,7 +140,6 @@ int dpu_ucc_free_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *team)
 
 void dpu_ucc_finalize(dpu_ucc_global_t *g) {
     ucc_finalize(g->lib);
-    MPI_Finalize();
 }
 
 void dpu_ucc_progress(dpu_ucc_comm_t *comm)

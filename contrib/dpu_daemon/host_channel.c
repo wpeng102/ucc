@@ -627,7 +627,6 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
         goto err;
     }
 
-    printf("Job Id %d rank %d size %d\n", hc->job_id, hc->world_rank, hc->world_size);
     ret = 0;
 
 err:
@@ -706,8 +705,8 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
     return 0;
 }
 
-ucc_rank_t dpu_get_world_rank(dpu_hc_t *hc,  int dpu_rank, int team_id, thread_ctx_t *ctx) {
-
+ucc_rank_t dpu_get_world_rank(dpu_hc_t *hc,  int dpu_rank, int team_id, thread_ctx_t *ctx)
+{
     ucc_rank_t  world_rank;
 
     if (team_id == UCC_WORLD_TEAM_ID) {
@@ -719,26 +718,20 @@ ucc_rank_t dpu_get_world_rank(dpu_hc_t *hc,  int dpu_rank, int team_id, thread_c
     return world_rank;
 }
 
-ucc_rank_t dpu_get_host_ep_rank(dpu_hc_t *hc,  int host_rank, int team_id, thread_ctx_t *ctx) {
-
+ucc_rank_t dpu_get_host_ep_rank(dpu_hc_t *hc,  int host_rank, int team_id, thread_ctx_t *ctx)
+{
     /* find my world_rank of the remote process in dpu comm world then find
      * its ep_rank */
-
     ucc_rank_t ep_rank, world_rank;
 
     if (team_id == UCC_WORLD_TEAM_ID) {
         world_rank = host_rank;
     } else {
-        //world_rank = ctx->comm.team_ctx_ranks[team_id][host_rank];
         world_rank = ctx->comm.host_team_ctx_ranks[team_id][host_rank];
     }
 
- // ep_rank = world_rank * hc->dpu_per_node_cnt  + (world_rank %
-   //         hc->dpu_per_node_cnt);
     ep_rank = world_rank * hc->dpu_per_node_cnt;
-
     return ep_rank;
-
 }
 
 ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *stage, dpu_buf_t *getbuf, thread_ctx_t *ctx)
@@ -1004,7 +997,8 @@ ucs_status_t dpu_send_init_completion(dpu_hc_t *hc)
     coll_sync.coll_id = -1;
     coll_sync.count_serviced = -1;
 
-    printf("# Accepted Job Id %d\n", hc->job_id);
+    printf("# Accepted Job Id %d with rank %d size %d\n",
+           hc->job_id, hc->world_rank, hc->world_size);
     _dpu_worker_flush(hc);
 
     ucp_worker_fence(hc->ucp_worker);
@@ -1021,7 +1015,6 @@ ucs_status_t dpu_send_init_completion(dpu_hc_t *hc)
 
 int dpu_hc_reset_job(dpu_hc_t *hc)
 {
-    printf("# Completing Job Id %d\n", hc->job_id);
     // _dpu_flush_host_eps(hc);
     // _dpu_worker_flush(hc);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.in);

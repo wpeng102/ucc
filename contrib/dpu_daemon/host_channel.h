@@ -257,5 +257,7 @@ void dpu_signal_comp_thread(thread_ctx_t *ctx, thread_sync_t *sync);
 
 ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request);
 
+ucc_rank_t dpu_get_world_rank(dpu_hc_t *hc,  int dpu_rank, int team_id, thread_ctx_t *ctx);
+ucc_rank_t dpu_get_host_ep_rank(dpu_hc_t *hc,  int host_rank, int team_id, thread_ctx_t *ctx);
     
 #endif

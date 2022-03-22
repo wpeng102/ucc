@@ -108,9 +108,8 @@ static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_syn
     size_t team_rank, team_size;
     dpu_hc_t *hc = ctx->hc;
     ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
-    assert(team != NULL);
-    UCC_CHECK(ucc_team_get_size(team, &team_size));
-    UCC_CHECK(ucc_team_get_my_ep(team, &team_rank));
+    UCC_CHECK(ucc_team_get_size(team, (uint32_t*)&team_size));
+    UCC_CHECK(ucc_team_get_my_ep(team, (uint64_t*)&team_rank));
 
     size_t count_total   = lsync->count_total;
     size_t my_count      = count_total / team_size;
@@ -174,12 +173,10 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
     ucs_status_t status;
     ucc_rank_t team_rank, team_size;
     dpu_hc_t *hc = ctx->hc;
-    ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
-    assert(team != NULL);
     ucc_coll_args_t *args = &lsync->coll_args;
-    UCC_CHECK(ucc_team_get_size(team, &team_size));
-    UCC_CHECK(ucc_team_get_my_ep(team, &team_rank));
-
+    ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+    UCC_CHECK(ucc_team_get_size(team, (uint32_t*)&team_size));
+    UCC_CHECK(ucc_team_get_my_ep(team, (uint64_t*)&team_rank));
 
     CTX_LOG("Doing alltoallv on team id %d team size %d\n", lsync->team_id, team_size);
 
@@ -711,8 +708,8 @@ void *dpu_worker_thread(void *arg)
             dpu_waitfor_comm_thread(ctx, thread_sub_sync);
             assert(UCC_COLL_TYPE_ALLREDUCE == coll_type);
 
-            dpu_buf_t *accbuf = thread_sub_sync->accbuf;
-            dpu_buf_t *getbuf = thread_sub_sync->getbuf;
+            dpu_buf_t *accbuf = (dpu_buf_t*)thread_sub_sync->accbuf;
+            dpu_buf_t *getbuf = (dpu_buf_t*)thread_sub_sync->getbuf;
             CTX_LOG("accbuf %p getbuf %p\n", accbuf, getbuf);
             if (accbuf == NULL && getbuf == NULL) {
                 finished = 1;
