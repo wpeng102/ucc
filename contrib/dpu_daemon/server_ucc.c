@@ -27,6 +27,11 @@ static ucc_status_t oob_allgather(void *sbuf, void *rbuf, size_t msglen,
     size_t inlen = msglen * g->hc->world_size;
     ucs_status_ptr_t request;
     ucp_tag_t req_tag = 2244, tag_mask = 0;
+
+    request = ucp_tag_send_nbx(hc->localhost_ep,
+            &msglen, sizeof(uint32_t), req_tag, &hc->req_param);
+    _dpu_request_wait(hc->ucp_worker, request);
+
     request = ucp_tag_send_nbx(hc->localhost_ep,
             sbuf, msglen, req_tag, &hc->req_param);
     _dpu_request_wait(hc->ucp_worker, request);
