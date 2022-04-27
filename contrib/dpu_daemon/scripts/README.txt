@@ -28,14 +28,12 @@
 
 Example:
 
-	#### HOST ####								#### DPU ####
-# ssh host-01								# ssh bf2-01
-# cd /nfs/dpu/scripts						# cd /nfs/dpu/scripts
-# ./build_x86.sh    						# ./build_arm.sh
-#											#
-#
-#											# ./run_dpu.sh
-#
+#### HOST ####                              #### DPU ####
+# ssh host-01                               # ssh bf2-01
+# cd /nfs/dpu/scripts                       # cd /nfs/dpu/scripts
+# ./build_x86.sh                            # ./build_arm.sh
+#                                           #
+#                                           # ./run_dpu.sh
 # ./run_omb.sh
 
 
