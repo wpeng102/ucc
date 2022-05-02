@@ -18,6 +18,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <assert.h>
+#include <pthread.h>
 
 #include "server_ucc.h"
 #include <ucc/api/ucc.h>
