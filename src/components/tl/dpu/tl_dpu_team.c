@@ -13,7 +13,7 @@
 
 #define UCC_WORLD_TEAM_ID 32768
 
-static ucc_status_t _dpu_client_oob_allgather(ucc_tl_dpu_team_t *team, int num_colls, size_t *msg_lens)
+static ucc_status_t _dpu_client_oob_allgather(ucc_tl_dpu_team_t *team, int num_colls)
 {
     ucc_tl_dpu_context_t *ctx = UCC_TL_DPU_TEAM_CTX(team);
     ucc_team_t *ucc_team = team->super.super.params.team;
@@ -27,12 +27,18 @@ static ucc_status_t _dpu_client_oob_allgather(ucc_tl_dpu_team_t *team, int num_c
                            .myrank     = team->rank};
 
     for (int i=0; i<num_colls; i++) {
-        size_t in_len = msg_lens[i];
-        size_t out_len = in_len * team_size;
-        char *tmp_buf = ucc_malloc(out_len);
         for (int rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
             ucc_tl_dpu_connect_t *dpu_connect = &ctx->dpu_ctx_list[rail];
-            ucp_worker_fence(dpu_connect->ucp_worker);
+            size_t in_len = 0;
+
+            /* Recv length of data */
+            req = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
+                    &in_len, sizeof(uint32_t), req_tag, tag_mask, &req_param);
+            ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, req);
+
+            size_t out_len = in_len * team_size;
+            char *tmp_buf = ucc_malloc(out_len);
+            /* Recv data for allgather */
             req = ucp_tag_recv_nbx(dpu_connect->ucp_worker,
                     tmp_buf, in_len, req_tag, tag_mask, &req_param);
             ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, req);
@@ -48,11 +54,11 @@ static ucc_status_t _dpu_client_oob_allgather(ucc_tl_dpu_team_t *team, int num_c
                     tmp_buf, out_len, req_tag, &req_param);
             ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, req);
             tl_debug(ctx->super.super.lib,
-                    "oob_allgather sent %zu bytes\n", out_len);
+                    "oob_allgather replied %zu bytes\n", out_len);
 
             ucp_worker_flush(dpu_connect->ucp_worker);
+            ucc_free(tmp_buf);
         }
-        ucc_free(tmp_buf);
     }
 
     tl_info(ctx->super.super.lib,
@@ -167,9 +173,8 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
 
         /* Execute oob allgather on behalf of DPU */
         if (params->id == UCC_WORLD_TEAM_ID) {
-            int    num_colls   = 4;
-            size_t msg_lens[4] = {8, 128, 8, 128};
-            _dpu_client_oob_allgather(self, num_colls, msg_lens);
+            int num_colls   = 4;    // FIXME: how to avoid hardcoding?
+            _dpu_client_oob_allgather(self, num_colls);
             _dpu_init_completion_wait(self);
         }
 
@@ -243,8 +248,7 @@ ucc_status_t ucc_tl_dpu_team_destroy(ucc_base_team_t *tl_team)
         /* Execute oob allgather on behalf of DPU */
         if (team_id == UCC_WORLD_TEAM_ID) {
             int num_colls = 2;
-            size_t msg_lens[2] = {1, 1};
-            _dpu_client_oob_allgather(team, num_colls, msg_lens);
+            _dpu_client_oob_allgather(team, num_colls);
         }
     }
     
