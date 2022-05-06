@@ -497,10 +497,17 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
     ucc_tl_dpu_task_t    *task;
     ucc_status_t          status;
 
+    /* FIXME: unsupported collectives should be excluded by score */
+    if (!(coll_args->args.coll_type & UCC_TL_DPU_SUPPORTED_COLLS) ||
+        coll_args->args.dst.info.count < 2) {
+        tl_info(team->context->lib, "coll type %d not supported", coll_args->args.coll_type);
+        return UCC_ERR_NOT_SUPPORTED;
+    }
+
     task = ucc_mpool_get(&ctx->req_mp);
 
     ucc_coll_task_init(&task->super, coll_args, team);
-    tl_info(team->context->lib, "task %p initialized", task);
+    tl_info(UCC_TASK_LIB(task), "task %p initialized", task);
 
     memcpy(&task->args, &coll_args->args, sizeof(ucc_coll_args_t));
 
@@ -515,7 +522,7 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
     task->status                     = UCC_TL_DPU_TASK_STATUS_INIT;
     task->dpu_per_node_cnt           = ctx->dpu_per_node_cnt;
 
-    for (int rail = 0; rail < ctx->dpu_per_node_cnt; rail++) { 
+    for (int rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
         task->dpu_task_list[rail].status = UCC_TL_DPU_TASK_STATUS_INIT;
         tl_team->dpu_sync_list[rail].coll_id_issued = ++(ctx->dpu_ctx_list[rail].coll_id_issued);
     }
@@ -531,6 +538,7 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
         status = ucc_tl_dpu_alltoallv_init(task);
         break;
     default:
+        tl_error(UCC_TASK_LIB(task), "coll type %d not supported", coll_args->args.coll_type);
         status = UCC_ERR_NOT_SUPPORTED;
     }
     if (status != UCC_OK) {
@@ -538,7 +546,7 @@ ucc_status_t ucc_tl_dpu_coll_init(ucc_base_coll_args_t      *coll_args,
         return status;
     }
 
-    tl_info(team->context->lib, "init coll req %p coll id %d", 
+    tl_info(UCC_TASK_LIB(task), "init coll req %p coll id %d", 
             task, tl_team->dpu_sync_list[0].coll_id_issued);
     *task_h = &task->super;
 
