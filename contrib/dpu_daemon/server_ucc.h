@@ -36,8 +36,8 @@
 #define DPU_MIN(a,b) (((a)<(b))?(a):(b))
 #define DPU_MAX(a,b) (((a)>(b))?(a):(b))
 
-/* must be more than 32768 */
-#define DPU_TEAM_POOL_SIZE 40000
+/* team id is uint16_t */
+#define DPU_TEAM_POOL_SIZE (1<<16)
 
 struct dpu_hc_t;
 typedef uint32_t ucc_rank_t;

@@ -21,10 +21,11 @@ static ucc_status_t _dpu_client_oob_allgather(ucc_tl_dpu_team_t *team, int num_c
     ucp_request_param_t req_param = {0};
     ucp_tag_t req_tag = 0, tag_mask = 0; 
     ucs_status_ptr_t req;
-    ucc_rank_t team_size = team->size;
+    ucc_rank_t team_rank = UCC_TL_TEAM_RANK(team);
+    ucc_rank_t team_size = UCC_TL_TEAM_SIZE(team);
     ucc_subset_t subset = {.map.type   = UCC_EP_MAP_FULL,
-                           .map.ep_num = team->size,
-                           .myrank     = team->rank};
+                           .map.ep_num = team_size,
+                           .myrank     = team_rank};
 
     for (int i=0; i<num_colls; i++) {
         for (int rail = 0; rail < ctx->dpu_per_node_cnt; rail++) {
@@ -98,51 +99,55 @@ ucc_status_t ucc_tl_dpu_new_team_create_test(ucc_tl_dpu_team_t *team, int rail)
     ucc_team_t              *ucc_team = team->super.super.params.team;
 
     /* notify dpu processes to mirror this team on the DPU world */
+    tl_info(ctx->super.super.lib, "team id %d state %d status %d", ucc_team->id, ucc_team->state, ucc_team->status);
 
-    if (ucc_team->ctx_ranks == NULL) {
-        team->status = UCC_INPROGRESS;
-        return team->status;
-    }
+    ucc_tl_dpu_put_sync_t              mirror = {0};
+    ucp_request_param_t                req_param = {0};
+    ucs_status_ptr_t                   mirror_req;
 
-    ucc_tl_dpu_put_sync_t              team_mirroring_signal;
-    ucs_status_ptr_t                   team_mirroring_signal_req;
-    ucp_request_param_t                team_mirror_req_param = {0};
+    ucc_tl_dpu_connect_t  *dpu_connect = &ctx->dpu_ctx_list[rail];
+    ucc_tl_dpu_sync_t     *dpu_sync = &team->dpu_sync_list[rail];
 
-    ctx->dpu_ctx_list[rail].coll_id_issued++;
-    team->dpu_sync_list[rail].coll_id_issued = ctx->dpu_ctx_list[rail].coll_id_issued;
+    mirror.coll_id              = ++dpu_connect->coll_id_issued;
+    dpu_sync->coll_id_issued    = dpu_connect->coll_id_issued;
 
-    team_mirroring_signal.create_new_team      = 1;
-    team_mirroring_signal.coll_id              = ctx->dpu_ctx_list[rail].coll_id_issued;
-    team_mirroring_signal.coll_args.coll_type  = UCC_COLL_TYPE_LAST;
-    team_mirroring_signal.team_id              = ucc_team->id;
-    team_mirroring_signal.dpu_per_node_cnt     = ctx->dpu_per_node_cnt;
+    mirror.create_new_team      = 1;
+    mirror.coll_args.coll_type  = UCC_COLL_TYPE_LAST;
+    mirror.team_id              = ucc_team->id;
+    mirror.dpu_per_node_cnt     = ctx->dpu_per_node_cnt;
 
     /* register the rank list in world with hca and give its rdma
      * key/address to dpu*/
-    team_mirroring_signal.num_ranks = team->size;
-    team_mirroring_signal.host_team_rank = team->rank;
-    memcpy(team_mirroring_signal.rank_list, ucc_team->ctx_ranks, team->size * sizeof(ucc_rank_t));
+    mirror.num_ranks = team->size;
+    mirror.host_team_rank = team->rank;
 
-    tl_info(ctx->super.super.lib, "sending team_mirroring_signal to dpu team, "
-            "coll id = %u and ctx->dpu_ctx_list[%d].coll_id_completed=%d ", 
-            team_mirroring_signal.coll_id, rail,
-            ctx->dpu_ctx_list[rail].coll_id_completed);
+    if (ucc_team->ctx_ranks) {
+        memcpy(mirror.rank_list, ucc_team->ctx_ranks, team->size * sizeof(ucc_rank_t));
+    } else {
+        for (ucc_rank_t r=0; r<team->size; r++) {
+            mirror.rank_list[r] = ucc_ep_map_eval(ucc_team->ctx_map, r);
+        }
+    }
 
-    team_mirroring_signal_req = ucp_tag_send_nbx(
-            ctx->dpu_ctx_list[rail].ucp_ep,
-            &team_mirroring_signal, sizeof(team_mirroring_signal),
-            0, &team_mirror_req_param);
+    tl_info(ctx->super.super.lib, "sending mirror to dpu team, "
+            "coll id %u rail %d coll_id_completed %u", 
+            mirror.coll_id, rail,
+            dpu_connect->coll_id_completed);
 
-    if (ucc_tl_dpu_req_check(team, team_mirroring_signal_req) != UCC_OK) {
+    mirror_req = ucp_tag_send_nbx(
+            dpu_connect->ucp_ep,
+            &mirror, sizeof(mirror),
+            0, &req_param);
+
+    if (ucc_tl_dpu_req_check(team, mirror_req) != UCC_OK) {
         return UCC_ERR_NO_MESSAGE;
     }
-    ucc_tl_dpu_req_wait(ctx->dpu_ctx_list[rail].ucp_worker, team_mirroring_signal_req);
-
-    team->dpu_sync_list[rail].coll_id_completed = ++ctx->dpu_ctx_list[rail].coll_id_completed;
+    ucc_tl_dpu_req_wait(dpu_connect->ucp_worker, mirror_req);
+    dpu_sync->coll_id_completed = ++dpu_connect->coll_id_completed;
 
     tl_info(ctx->super.super.lib, 
-            "sent team_mirroring_signal to dpu team with ctx->dpu_ctx_list[%d].coll_id_completed=%d",
-            rail, ctx->dpu_ctx_list[rail].coll_id_completed); 
+            "sent mirror to dpu team with rail %d coll_id_completed %u",
+            rail, dpu_connect->coll_id_completed); 
 
     team->status = UCC_OK;
     return team->status;
@@ -157,7 +162,8 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
 
     UCC_CLASS_CALL_SUPER_INIT(ucc_tl_team_t, &ctx->super, params);
 
-    tl_info(ctx->super.super.lib, "starting: %p team_create team_id %d", self, params->id);
+    tl_info(ctx->super.super.lib,
+        "starting: %p team_create team_id %d", self, params->id);
 
     self->size      = UCC_TL_TEAM_SIZE(self);
     self->rank      = UCC_TL_TEAM_RANK(self);
@@ -182,6 +188,8 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_team_t, ucc_base_context_t *tl_context,
         if (params->id != UCC_WORLD_TEAM_ID) {
             ucc_status =  ucc_tl_dpu_new_team_create_test(self, rail);
             if (ucc_status != UCC_OK) {
+                tl_error(ctx->super.super.lib,
+                    "team_create failed status %d team_id %d", ucc_status, params->id);
                 return ucc_status;
             }
             if (rail == self->dpu_per_node_cnt - 1) {
