@@ -13,6 +13,7 @@
 
 #include "server_ucc.h"
 #include "host_channel.h"
+#include "dpu_log.h"
 #include "ucc/api/ucc.h"
 
 #define CORES 6
@@ -31,6 +32,27 @@ thread_sync_t *thread_main_sync = &syncs[0];
 thread_sync_t *thread_sub_sync  = &syncs[1];
 
 pthread_mutex_t sync_lock;
+
+uint64_t dpu_coll_counter[UCC_COLL_TYPE_LAST] = {0};
+
+static void dpu_coll_print_summary(void)
+{
+    int print_summary = 0;
+    char *s = getenv("UCC_TL_DPU_PRINT_SUMMARY");
+    if (s) { print_summary = !!atoi(s); }
+    if (!print_summary) return;
+
+    printf("# Summary ");
+    /* TODO: find a more robust way to iterate */
+    for (ucc_coll_type_t coll=1; coll<UCC_COLL_TYPE_LAST; coll <<= 1) {
+        uint64_t count = dpu_coll_counter[coll];
+        if (count > 0) {
+            printf(" %s %lu ", ucc_coll_type_str(coll), count);
+        }
+        dpu_coll_counter[coll] = 0; /* Reset Counter */
+    }
+    printf("\n");
+}
 
 /* TODO: export ucc_mc.h */
 ucc_status_t ucc_mc_reduce(const void *src1, const void *src2, void *dst,
@@ -409,7 +431,7 @@ void dpu_mark_coll_done(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     dpu_hc_reply(ctx->hc, ctx->coll_sync);
 }
 
-static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
+static ucc_status_t dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     /* read in the rank list in comm world */
     int i = 0, idx = 0, rail = 0;
@@ -457,7 +479,7 @@ static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     status = ucc_team_create_post(&ctx->comm.ctx, 1, &team_params, &new_team);
     if (UCC_OK != status) {
         fprintf(stderr, "ucc_team_create_post failed with %d\n", status);
-        return;
+        goto err;
     }
 
     do {
@@ -467,7 +489,7 @@ static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
         
     if (UCC_OK != status) {
         fprintf(stderr, "ucc_team_create_test failed with %d\n", status);
-        return;
+        goto err;
     }
 
     /* a new team has been created, insert it into the thread context */
@@ -477,9 +499,15 @@ static void dpu_create_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     ctx->comm.host_team_ctx_ranks[team_id] = host_rank_list;
     CTX_LOG("created new team with team_id %u size %d\n",
             team_id, dpu_team_size);
+    return UCC_OK;
+
+err:
+    free(dpu_rank_list);
+    free(host_rank_list);
+    return status;
 }
 
-static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
+static ucc_status_t dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
     uint16_t team_id = lsync->team_id;
     ucc_team_h team = ctx->comm.team_pool[team_id]; 
@@ -492,7 +520,7 @@ static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     status = ucc_team_destroy(team);
     if (status < 0) {
         fprintf(stderr, "ucc_team_destroy failed with %d\n", status);
-        return;
+        return status;
     }
 
     ctx->comm.team_pool[team_id] = NULL; 
@@ -506,6 +534,7 @@ static void dpu_destroy_comm_team(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     }
 
     CTX_LOG("destroyed team with team_id %d\n", team_id);
+    return status;
 }
 
 void *dpu_comm_thread(void *arg)
@@ -545,6 +574,7 @@ void *dpu_comm_thread(void *arg)
         dpu_per_node_cnt = lsync->dpu_per_node_cnt;
 
         assert(0 <= team_id && team_id < DPU_TEAM_POOL_SIZE);
+        dpu_coll_counter[coll_type]++;
 
         CTX_LOG(
             "Start coll id: %u, type: %d, count total: %lu on team: %u "
@@ -812,6 +842,8 @@ int main(int argc, char **argv)
         dpu_ucc_free_team(&ucc_glob, &comm_ctx.comm);
         
         dpu_hc_reset_job(&hc);
+        dpu_coll_print_summary();
+
         memset(&coll_sync, 0, sizeof(coll_sync));
         memset(&tmp_sync,  0, sizeof(tmp_sync));
         memset(thread_main_sync, 0, sizeof(thread_sync_t));
