@@ -37,12 +37,12 @@ static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 
 static int _server_connect(ucc_tl_dpu_context_t *ctx, char *hname, uint16_t port)
 {
-    int sock = 0, n;
+    int sock = -1, n;
     struct addrinfo *res, *t;
     struct addrinfo hints = { 0 };
     char service[64];
 
-    hints.ai_family   = AF_UNSPEC;
+    hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     sprintf(service, "%d", port);
     n = getaddrinfo(hname, service, &hints, &res);
@@ -55,15 +55,81 @@ static int _server_connect(ucc_tl_dpu_context_t *ctx, char *hname, uint16_t port
     for (t = res; t; t = t->ai_next) {
         sock = socket(t->ai_family, t->ai_socktype, t->ai_protocol);
         if (sock >= 0) {
-            if (!connect(sock, t->ai_addr, t->ai_addrlen))
+            if (0 > connect(sock, t->ai_addr, t->ai_addrlen)) {
+                tl_error(ctx->super.super.lib, "Connect failed with errno %d (%s)\n", errno, strerror(errno));
+                close(sock);
+                sock = -1;
+            } else {
                 break;
-            close(sock);
-            sock = -1;
+            }
         }
     }
 
     freeaddrinfo(res);
     return sock;
+}
+
+static int _server_spawn(ucc_tl_dpu_context_t *ctx, char *hname, int sockfd_master)
+{
+    int sock = -1;
+    uint32_t port;
+    int ret;
+    struct addrinfo *res, *t;
+    struct addrinfo hints = { 0 };
+    char service[64];
+
+    /* FIXME: does not work for non-MPI */
+    uint32_t local_rank = atoi(getenv("OMPI_COMM_WORLD_LOCAL_RANK"));
+    ret = send(sockfd_master, &local_rank, sizeof(uint32_t), 0);
+    if (ret < 0) {
+        tl_error(ctx->super.super.lib, "send local rank failed");
+        goto err;
+    }
+
+    ret = recv(sockfd_master, &port, sizeof(uint32_t), MSG_WAITALL);
+    if (ret < 0) {
+        tl_error(ctx->super.super.lib, "recv port info failed");
+        goto err;
+    }
+    tl_info(ctx->super.super.lib, "Recvd spawn response, local rank %d port %d\n", local_rank, port);
+
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    sprintf(service, "%d", port);
+
+    ret = getaddrinfo(hname, service, &hints, &res);
+    if (ret < 0) {
+        tl_error(ctx->super.super.lib, "%s:%d: getaddrinfo(): %s for %s:%s\n", __FILE__,__LINE__, gai_strerror(ret), hname, service);
+        goto err;
+    }
+
+    for (t = res; t; t = t->ai_next) {
+        sock = socket(t->ai_family, t->ai_socktype, t->ai_protocol);
+        if (sock < 0) {
+            tl_error(ctx->super.super.lib, "Socket failed with errno %d (%s)\n", errno, strerror(errno));
+            goto err_sock;
+        }
+
+        /* TODO: Add timeout or max retries */
+        do {
+            usleep(1000);
+            ret = connect(sock, t->ai_addr, t->ai_addrlen);
+        } while (ret < 0 && errno == ECONNREFUSED);
+
+        if (ret < 0) {
+            tl_error(ctx->super.super.lib, "Connect failed with errno %d (%s)\n", errno, strerror(errno));
+            goto err_sock;
+        }
+    }
+
+    freeaddrinfo(res);
+err:
+    close(sockfd_master);
+    return sock;
+err_sock:
+    close(sock);
+    sock = -1;
+    goto err;
 }
 
 UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
@@ -75,7 +141,6 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
         ucc_derived_of(config, ucc_tl_dpu_context_config_t);
 
     ucc_status_t        ucc_status = UCC_OK;
-    int sockfd = 0, last_dpu_found = 0;
     ucp_worker_params_t worker_params;
     ucp_worker_attr_t   worker_attr;
     ucp_params_t        ucp_params;
@@ -83,7 +148,14 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     ucp_ep_h            ucp_ep;
     ucp_context_h       ucp_context;
     ucp_worker_h        ucp_worker;
-    int i, ret, rail = 0, dpu_count = 0, hca = 0;
+    int                 sockfd_master;
+    int                 sockfd;
+
+    int i, ret;
+    int rail = 0;
+    int hca = 0;
+    int dpu_count = 0;
+    int last_dpu_found = 0;
 
     /* Identify DPU */
     char hname[MAX_DPU_HOST_NAME];
@@ -195,7 +267,21 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
         tl_info(self->super.super.lib, "Connecting to %s with hca id %s", dpu, dpu_hcanames[rail]);
 
-        sockfd = _server_connect(self, dpu, tl_dpu_config->server_port);
+        sockfd_master = _server_connect(self, dpu, tl_dpu_config->server_port);
+        if (sockfd_master < 0) {
+            tl_error(self->super.super.lib,
+                "failed connecting to DPU master at %s:%d\n", dpu, tl_dpu_config->server_port);
+            ucc_status = UCC_ERR_NO_MESSAGE;
+            goto err;
+        }
+
+        sockfd = _server_spawn(self, dpu, sockfd_master);
+        if (sockfd < 0) {
+            tl_error(self->super.super.lib,
+                "failed to spawn DPU server at %s\n", dpu);
+            ucc_status = UCC_ERR_NO_MESSAGE;
+            goto err;
+        }
 
         memset(&ucp_context, 0, sizeof(ucp_context_h));
         ucp_config_t *ucp_config;

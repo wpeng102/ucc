@@ -30,7 +30,7 @@
 #define PORT_STRING_LEN     8
 #define SUCCESS             0
 #define ERROR               1
-#define DEFAULT_PORT        13337
+#define DEFAULT_PORT        12345
 
 #define DPU_MIN(a,b) (((a)<(b))?(a):(b))
 #define DPU_MAX(a,b) (((a)>(b))?(a):(b))

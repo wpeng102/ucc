@@ -108,7 +108,7 @@ void dpu_ucc_barrier(ucc_context_h ctx, ucc_team_h team)
         .mask = 0,
         .coll_type = UCC_COLL_TYPE_BARRIER,
     };
-    CTX_LOG("Issue Synchronizing Barrier on WORLD team\n");
+    DPU_LOG("Issue Synchronizing Barrier on WORLD team\n");
     UCC_CHECK(ucc_collective_init(&coll, &request, team));
     UCC_CHECK(ucc_collective_post(request));
     while (UCC_OK != ucc_collective_test(request)) {
