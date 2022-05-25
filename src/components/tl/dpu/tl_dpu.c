@@ -27,7 +27,7 @@ static ucs_config_field_t ucc_tl_dpu_context_config_table[] = {
      UCC_CONFIG_TYPE_STRING
     },
 
-    {"SERVER_PORT", "13337",
+    {"SERVER_PORT", "10000",
      "Bluefield DPU port",
      ucc_offsetof(ucc_tl_dpu_context_config_t, server_port),
      UCC_CONFIG_TYPE_UINT

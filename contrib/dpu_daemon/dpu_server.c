@@ -125,7 +125,8 @@ static void dpu_thread_set_affinity(thread_ctx_t *ctx)
         CPU_SET(7, &cpuset);
     }
 
-    pthread_setaffinity_np(thread, sizeof(cpuset), &cpuset);
+    /* FIXME */
+    // pthread_setaffinity_np(thread, sizeof(cpuset), &cpuset);
 }
 
 static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
@@ -817,61 +818,62 @@ int main(int argc, char **argv)
     int omp_threads = 6;
     s = getenv("UCC_MC_CPU_REDUCE_NUM_THREADS");
     if (s) { omp_threads = atoi(s); }
-    printf("DPU daemon: Running with %d OpenMP threads\n", omp_threads);
     
     int window_size = 32;
     s = getenv("UCC_TL_DPU_BCAST_WINDOW");
     if (s) { window_size = atoi(s); }
+    hc.window_size = window_size;
 
+    int listen_port = DEFAULT_PORT;
+    s = getenv("LISTEN_PORT");
+    if (s) { listen_port = atoi(s); }
+    hc.port = listen_port;
+
+    printf("DPU server: Running with %d OpenMP threads on port %d\n", omp_threads, listen_port);
     UCC_CHECK(dpu_ucc_init(argc, argv, &ucc_glob));
     UCC_CHECK(dpu_hc_init(&hc));
-    hc.window_size = window_size;
+
     ucc_glob.hc = &hc;
 
     /* Try to clean up on Exit */
-    atexit(_cleanup);
-    signal(SIGINT, _sighandler);
+    // atexit(_cleanup);
+    // signal(SIGINT, _sighandler);
 
-    while (1) {
-        UCC_CHECK(dpu_hc_accept_job(&hc));
-        UCS_CHECK(dpu_hc_connect_localhost_ep(&hc));
+    UCC_CHECK(dpu_hc_accept_job(&hc));
+    UCS_CHECK(dpu_hc_connect_localhost_ep(&hc));
 
-        thread_ctx_t worker_ctx = {
-            .idx = THREAD_IDX_WORKER,
-            .hc = &hc,
-            .coll_sync = &coll_sync,
-        };
+    thread_ctx_t worker_ctx = {
+        .idx = THREAD_IDX_WORKER,
+        .hc = &hc,
+        .coll_sync = &coll_sync,
+    };
 
-        thread_ctx_t comm_ctx = {
-            .idx = THREAD_IDX_COMM,
-            .hc = &hc,
-            .coll_sync = &coll_sync,
-        };
+    thread_ctx_t comm_ctx = {
+        .idx = THREAD_IDX_COMM,
+        .hc = &hc,
+        .coll_sync = &coll_sync,
+    };
 
-        UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &worker_ctx.comm));
-        UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx.comm));
-        dpu_hc_connect_remote_hosts(&hc, &comm_ctx.comm);
-        dpu_hc_connect_remote_dpus(&hc, &comm_ctx.comm);
-        UCS_CHECK(dpu_send_init_completion(&hc));
-        
-        pthread_create(&worker_ctx.id, NULL, dpu_worker_thread, &worker_ctx);
-        pthread_create(&comm_ctx.id, NULL, dpu_comm_thread, &comm_ctx);
+    UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &worker_ctx.comm));
+    UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx.comm));
+    dpu_hc_connect_remote_hosts(&hc, &comm_ctx.comm);
+    UCS_CHECK(dpu_send_init_completion(&hc));
+    
+    pthread_create(&worker_ctx.id, NULL, dpu_worker_thread, &worker_ctx);
+    pthread_create(&comm_ctx.id, NULL, dpu_comm_thread, &comm_ctx);
 
-        
-        pthread_join(worker_ctx.id, NULL);
-        pthread_join(comm_ctx.id, NULL);
+    
+    pthread_join(worker_ctx.id, NULL);
+    pthread_join(comm_ctx.id, NULL);
 
-        dpu_ucc_free_team(&ucc_glob, &worker_ctx.comm);
-        dpu_ucc_free_team(&ucc_glob, &comm_ctx.comm);
-        
-        dpu_hc_reset_job(&hc);
-        dpu_coll_print_summary();
+    dpu_ucc_free_team(&ucc_glob, &worker_ctx.comm);
+    dpu_ucc_free_team(&ucc_glob, &comm_ctx.comm);
+    
+    dpu_hc_reset_job(&hc);
+    dpu_hc_finalize(&hc);
+    dpu_ucc_finalize(&ucc_glob);
 
-        memset(&coll_sync, 0, sizeof(coll_sync));
-        memset(&tmp_sync,  0, sizeof(tmp_sync));
-        memset(thread_main_sync, 0, sizeof(thread_sync_t));
-        memset(thread_sub_sync,  0, sizeof(thread_sync_t));
-    }
+    dpu_coll_print_summary();
 
-    return 0;
+    return EXIT_SUCCESS;
 }

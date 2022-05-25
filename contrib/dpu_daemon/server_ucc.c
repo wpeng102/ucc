@@ -101,6 +101,22 @@ exit_err:
     return status;
 }
 
+void dpu_ucc_barrier(ucc_context_h ctx, ucc_team_h team)
+{
+    ucc_coll_req_h request;
+    ucc_coll_args_t coll = {
+        .mask = 0,
+        .coll_type = UCC_COLL_TYPE_BARRIER,
+    };
+    DPU_LOG("Issue Synchronizing Barrier on WORLD team\n");
+    UCC_CHECK(ucc_collective_init(&coll, &request, team));
+    UCC_CHECK(ucc_collective_post(request));
+    while (UCC_OK != ucc_collective_test(request)) {
+        ucc_context_progress(ctx);
+    }
+    UCC_CHECK(ucc_collective_finalize(request));
+}
+
 int dpu_ucc_alloc_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *comm)
 {
     ucc_status_t status = UCC_OK;

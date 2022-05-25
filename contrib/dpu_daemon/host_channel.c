@@ -77,9 +77,6 @@ static int _dpu_listen(dpu_hc_t *hc)
         return UCC_ERR_NO_MESSAGE;
     }
 
-    hc->port = DEFAULT_PORT;
-    /* TODO: if envar(port) - replace */
-
     /* creates an UN-named socket inside the kernel and returns
      * an integer known as socket descriptor
      * This function takes domain/family as its first argument.
@@ -368,7 +365,7 @@ out:
 int dpu_hc_init(dpu_hc_t *hc)
 {
     int ret = UCC_OK;
-    memset(hc, 0, sizeof(*hc));
+    // memset(hc, 0, sizeof(*hc));
 
     /* Start listening */
     ret = _dpu_listen(hc);
@@ -626,7 +623,7 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
     * client request, the three way TCP handshake* is complete, the function accept()
     * wakes up and returns the socket descriptor representing the client socket.
     */
-    DPU_LOG("Waiting for connection from Job Id %d\n", hc->job_id);
+    DPU_LOG("Waiting for connection from Job Id %d at port %u\n", hc->job_id, hc->port);
     hc->connfd = accept(hc->listenfd, (struct sockaddr*)NULL, NULL);
     if (-1 == hc->connfd) {
         fprintf(stderr, "Error in accept (%s)!\n", strerror(errno));
