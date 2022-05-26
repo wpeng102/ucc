@@ -7,11 +7,9 @@
 # $HEADER$
 #
 
-#MPI_DIR=/global/scratch/users/sourav/build-arm/ompi
-UCX_DIR=/global/scratch/users/sourav/build-arm/ucx
-UCC_DIR=/global/scratch/users/sourav/build-arm/ucc
-UCC_SRC=/global/home/users/sourav/workspace/ucc
-#MPICC=$(MPI_DIR)/bin/mpicc
+UCX_DIR=/global/scratch/users/sourav/xgvmi/build-arm/ucx
+UCC_DIR=/global/scratch/users/sourav/xgvmi/build-arm/ucc
+UCC_SRC=/global/home/users/sourav/workspace/xgvmi/ucc
 CC=gcc
 
 CFLAGS = -I$(UCC_SRC)/src -I$(UCC_DIR)/include -I$(UCX_DIR)/include -fopenmp

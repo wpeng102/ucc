@@ -76,11 +76,14 @@ ucs_status_t ucc_tl_dpu_register_buf(
     ucp_mem_attr_t mem_attr;
     ucs_status_t status;
     ucp_mem_map_params_t mem_params = {
-        .address = base,
-        .length = size,
-        .field_mask = UCP_MEM_MAP_PARAM_FIELD_FLAGS  |
-                      UCP_MEM_MAP_PARAM_FIELD_LENGTH |
-                      UCP_MEM_MAP_PARAM_FIELD_ADDRESS,
+        .field_mask = UCP_MEM_MAP_PARAM_FIELD_FLAGS   |
+                      UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+                      UCP_MEM_MAP_PARAM_FIELD_LENGTH  |
+                      UCP_MEM_MAP_PARAM_FIELD_PEER_ID ,
+        .flags      = UCP_MEM_MAP_SHARED,
+        .address    = base,
+        .length     = size,
+        .peer_id    = 0, /* TODO: gvmi id */
     };
 
     status = ucp_mem_map(ucp_ctx, &mem_params, &rkey->memh);
@@ -99,6 +102,9 @@ ucs_status_t ucc_tl_dpu_register_buf(
     }
     assert(mem_attr.length >= size);
     assert(mem_attr.address <= base);
+
+    rkey->address = base;
+    rkey->length  = size;
 
     status = ucp_rkey_pack(ucp_ctx, rkey->memh, &rkey->rkey_buf, &rkey->rkey_buf_size);
     if (status != UCS_OK) {
@@ -139,13 +145,8 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
     if (task->args.coll_type == UCC_COLL_TYPE_ALLTOALLV) {
         src_buf = task->args.src.info_v.buffer;
         dst_buf = task->args.dst.info_v.buffer;
-
-        src_len = dst_len = 0;
-        for (int i=0; i<task->team->size; i++) {
-            src_len += task->args.src.info_v.counts[i];
-            dst_len += task->args.dst.info_v.counts[i];
-        }
-
+        src_len = ucc_coll_args_get_total_count(&task->args, task->args.src.info_v.counts, task->team->size);
+        dst_len = ucc_coll_args_get_total_count(&task->args, task->args.dst.info_v.counts, task->team->size);
         src_len *= ucc_dt_size(task->args.src.info_v.datatype);
         dst_len *= ucc_dt_size(task->args.dst.info_v.datatype);
     } else {
@@ -184,15 +185,19 @@ static void ucc_tl_dpu_init_put(ucc_tl_dpu_context_t *ctx,
     ucc_tl_dpu_put_sync_t *put_sync = &task->dpu_task_list[rail].put_sync;
     ucc_tl_dpu_sub_task_t *dpu_task = &task->dpu_task_list[rail];
 
-    memcpy(put_sync->rkeys.src_rkey, dpu_task->src_rkey.rkey_buf,
+    memcpy(put_sync->src_rkey.rkey_buf, dpu_task->src_rkey.rkey_buf,
             dpu_task->src_rkey.rkey_buf_size);
-    memcpy(put_sync->rkeys.dst_rkey, dpu_task->dst_rkey.rkey_buf,
+
+    put_sync->src_rkey.rkey_buf_len = dpu_task->src_rkey.rkey_buf_size;
+    put_sync->src_rkey.buf_addr     = dpu_task->src_rkey.address;
+    put_sync->src_rkey.buf_length   = dpu_task->src_rkey.length;
+
+    memcpy(put_sync->dst_rkey.rkey_buf, dpu_task->dst_rkey.rkey_buf,
             dpu_task->dst_rkey.rkey_buf_size);
 
-    put_sync->rkeys.src_rkey_len = dpu_task->src_rkey.rkey_buf_size;
-    put_sync->rkeys.dst_rkey_len = dpu_task->dst_rkey.rkey_buf_size;
-    put_sync->rkeys.src_buf = task->args.src.info.buffer;
-    put_sync->rkeys.dst_buf = task->args.dst.info.buffer;
+    put_sync->dst_rkey.rkey_buf_len = dpu_task->dst_rkey.rkey_buf_size;
+    put_sync->dst_rkey.buf_addr     = dpu_task->dst_rkey.address;
+    put_sync->dst_rkey.buf_length   = dpu_task->dst_rkey.length;
 }
 
 static ucc_status_t ucc_tl_dpu_issue_send( ucc_tl_dpu_task_t *task,

@@ -86,14 +86,13 @@ typedef struct ucc_tl_dpu_context {
 UCC_CLASS_DECLARE(ucc_tl_dpu_context_t, const ucc_base_context_params_t *,
                   const ucc_base_config_t *);
 
-typedef struct ucc_tl_dpu_rkeys_t {
-    char src_rkey[MAX_RKEY_LEN];
-    char dst_rkey[MAX_RKEY_LEN];
-    size_t src_rkey_len;
-    size_t dst_rkey_len;
-    void *src_buf;
-    void *dst_buf;
-} ucc_tl_dpu_put_rkeys_t;
+typedef struct ucc_tl_dpu_put_rkey_t {
+    char    rkey_buf[MAX_RKEY_LEN];
+    size_t  rkey_buf_len;
+    void   *buf_addr;
+    size_t  buf_length;
+    ucp_mem_h memh;
+} ucc_tl_dpu_put_rkey_t;
 
 typedef struct buf_info_v_t {
     ucc_count_t counts[MAX_NUM_RANKS];
@@ -101,7 +100,8 @@ typedef struct buf_info_v_t {
 } buf_info_v_t;
 
 typedef struct ucc_tl_dpu_put_sync_t {
-    ucc_tl_dpu_put_rkeys_t   rkeys;
+    ucc_tl_dpu_put_rkey_t    src_rkey;
+    ucc_tl_dpu_put_rkey_t    dst_rkey;
     uint16_t                 team_id;
     uint16_t                 rail;
     uint16_t                 dpu_per_node_cnt;
@@ -118,6 +118,8 @@ typedef struct ucc_tl_dpu_put_sync_t {
 
 typedef struct ucc_tl_dpu_rkey_t {
     ucp_mem_h memh;
+    void     *address;
+    size_t    length;
     void     *rkey_buf;
     size_t    rkey_buf_size;
 } ucc_tl_dpu_rkey_t;

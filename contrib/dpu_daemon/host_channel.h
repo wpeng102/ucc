@@ -57,13 +57,17 @@ do {                                                                \
 #endif
 
 typedef struct host_rkey_t {
-    char    src_rkey_buf[MAX_RKEY_LEN];
-    char    dst_rkey_buf[MAX_RKEY_LEN];
-    size_t  src_rkey_len;
-    size_t  dst_rkey_len;
-    void   *src_buf;
-    void   *dst_buf;
+    char    rkey_buf[MAX_RKEY_LEN];
+    size_t  rkey_buf_len;
+    void   *buf_addr;
+    size_t  buf_len;
+    ucp_mem_h memh;
 } host_rkey_t;
+
+typedef struct alias_rkey_t {
+    ucp_rkey_h  rkey;
+    host_rkey_t desc;
+} alias_rkey_t;
 
 typedef struct buf_info_v_t {
     ucc_count_t counts[MAX_NUM_RANKS];
@@ -73,7 +77,8 @@ typedef struct buf_info_v_t {
 /* sync struct type
  * use it for counter, dtype, ar op, length */
 typedef struct dpu_put_sync_t {
-    host_rkey_t         rkeys;
+    host_rkey_t         src_rkey;
+    host_rkey_t         dst_rkey;
     uint16_t            team_id;
     uint16_t            rail;
     uint16_t            dpu_per_node_cnt;
@@ -182,8 +187,8 @@ typedef struct dpu_hc_t {
     size_t rem_worker_addr_len;
     ucp_ep_h localhost_ep;
     uint64_t sync_addr;
-    ucp_rkey_h src_rkey;
-    ucp_rkey_h dst_rkey;
+    // ucp_rkey_h src_rkey;
+    // ucp_rkey_h dst_rkey;
 
     /* pipeline buffer */
     dpu_pipeline_t  pipeline;
@@ -195,9 +200,8 @@ typedef struct dpu_hc_t {
     uint32_t team_size;
     ucp_ep_h *host_eps;
     ucp_ep_h *dpu_eps;
-    host_rkey_t *host_rkeys;
-    ucp_rkey_h *host_src_rkeys;
-    ucp_rkey_h *host_dst_rkeys;
+    alias_rkey_t *host_src_rkeys;
+    alias_rkey_t *host_dst_rkeys;
 
     /* Multi-rail support */
     int rail;
@@ -215,6 +219,7 @@ int dpu_hc_init(dpu_hc_t *dpu_hc);
 int dpu_hc_accept_job(dpu_hc_t *hc);
 int dpu_hc_connect_localhost_ep(dpu_hc_t *hc);
 int dpu_hc_connect_remote_hosts(dpu_hc_t *hc, dpu_ucc_comm_t *comm);
+int dpu_hc_connect_remote_dpus(dpu_hc_t *hc, dpu_ucc_comm_t *comm);
 int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync);
 int dpu_hc_wait(dpu_hc_t *hc, unsigned int coll_id);
 int dpu_hc_reset_job(dpu_hc_t *dpu_hc);

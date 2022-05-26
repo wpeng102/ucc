@@ -151,43 +151,26 @@ static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_syn
         int src_rank = (team_rank + i) % team_size;
         size_t src_offset = team_rank * my_count * dt_size;
         size_t dst_offset = src_rank * my_count * dt_size;
-        size_t count_done = 0;
 
-        while (count_done < my_count) {
-            ucs_status_ptr_t ucp_req = NULL;
-            size_t remaining_elems = my_count - count_done;
-            size_t count_step = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
-            size_t bytes_step = count_step * dt_size;
+        ucs_status_ptr_t ucp_req = NULL;
+        size_t nbytes    = my_count * dt_size;
+        void * src_addr  = hc->host_src_rkeys[src_rank].desc.buf_addr + src_offset;
+        void * dst_addr  = lsync->dst_rkey.buf_addr + dst_offset;
 
-            void * src_addr  = hc->host_rkeys[src_rank].src_buf + src_offset;
-            void * tmp_addr  = hc->pipeline.stages[0].accbuf.buf;
-            void * dst_addr  = lsync->rkeys.dst_buf + dst_offset;
+        ucp_request_param_t get_param = {
+            .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
+            .memh = lsync->dst_rkey.memh,
+        };
 
-            DPU_LOG("Issue Get from %d src offset %lu count %lu bytes %lu\n",
-                    src_rank, src_offset, my_count, bytes_step);
-            ucp_worker_fence(hc->ucp_worker);
-            ucp_req = ucp_get_nbx(
-                hc->host_eps[src_rank], tmp_addr, bytes_step, (uint64_t)src_addr,
-                hc->host_src_rkeys[src_rank], &hc->req_param);
-            status = _dpu_request_wait(hc->ucp_worker, ucp_req);
-            if (status != UCS_OK) {
-                return UCC_ERR_NO_RESOURCE;
-            }
-
-            DPU_LOG("Issue Put to host dst offset %lu dst offset %lu count %lu bytes %lu\n",
-                    dst_offset, my_count, bytes_step);
-            ucp_worker_fence(hc->ucp_worker);
-            ucp_req = ucp_put_nbx(
-                hc->localhost_ep, tmp_addr, bytes_step, (uint64_t)dst_addr,
-                hc->dst_rkey, &hc->req_param);
-            status = _dpu_request_wait(hc->ucp_worker, ucp_req);
-            if (status != UCS_OK) {
-                return UCC_ERR_NO_RESOURCE;
-            }
-
-            count_done += count_step;
-            src_offset += bytes_step;
-            dst_offset += bytes_step;
+        DPU_LOG("Issue Get from %d src %p offset %lu dst %p offset %lu count %lu bytes %lu\n",
+                src_rank, src_addr, src_offset, dst_addr, dst_offset, my_count, nbytes);
+        ucp_worker_fence(hc->ucp_worker);
+        ucp_req = ucp_get_nbx(
+            hc->dpu_eps[src_rank], dst_addr, nbytes, (uint64_t)src_addr,
+            hc->host_src_rkeys[src_rank].rkey, &get_param);
+        status = _dpu_request_wait(hc->ucp_worker, ucp_req);
+        if (status != UCS_OK) {
+            return UCC_ERR_NO_RESOURCE;
         }
     }
 
@@ -233,49 +216,78 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
         size_t src_offset = src_displ * sdt_size;
         size_t dst_offset = dst_displ * rdt_size;
 
-        size_t count_done = 0;
-        while (count_done < src_count) {
-            ucs_status_ptr_t ucp_req = NULL;
-            size_t remaining_elems = src_count - count_done;
-            size_t count_step = DPU_MIN(hc->pipeline.buffer_size/sdt_size, remaining_elems);
-            size_t bytes_step = count_step * sdt_size;
+        ucs_status_ptr_t ucp_req = NULL;
+        size_t nbytes    = src_count * sdt_size;
+        void * src_addr  = hc->host_src_rkeys[src_rank].desc.buf_addr + src_offset;
+        void * dst_addr  = lsync->dst_rkey.buf_addr + dst_offset;
 
-            DPU_LOG("Element count %lu done %lu remaining %lu this step %lu\n",
-                    src_count, count_done, remaining_elems, count_step);
+        ucp_request_param_t get_param = {
+            .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
+            .memh = lsync->dst_rkey.memh,
+        };
 
-            void * src_addr  = hc->host_rkeys[src_rank].src_buf + src_offset;
-            void * tmp_addr  = hc->pipeline.stages[0].accbuf.buf;
-            void * dst_addr  = lsync->rkeys.dst_buf + dst_offset;
-
-            DPU_LOG("Issue Get from %d src offset %lu count %lu bytes %lu\n",
-                    src_rank, src_offset, src_count, bytes_step);
-            ucp_worker_fence(hc->ucp_worker);
-            ucp_req = ucp_get_nbx(
-                hc->host_eps[src_rank], tmp_addr, bytes_step, (uint64_t)src_addr,
-                hc->host_src_rkeys[src_rank], &hc->req_param);
-            status = _dpu_request_wait(hc->ucp_worker, ucp_req);
-            if (status != UCS_OK) {
-                return UCC_ERR_NO_RESOURCE;
-            }
-
-            DPU_LOG("Issue Put to host dst offset %lu count %lu bytes %lu\n",
-                    dst_offset, dst_count, bytes_step);
-            ucp_worker_fence(hc->ucp_worker);
-            ucp_req = ucp_put_nbx(
-                hc->localhost_ep, tmp_addr, bytes_step, (uint64_t)dst_addr,
-                hc->dst_rkey, &hc->req_param);
-            status = _dpu_request_wait(hc->ucp_worker, ucp_req);
-            if (status != UCS_OK) {
-                return UCC_ERR_NO_RESOURCE;
-            }
-
-            count_done += count_step;
-            src_offset += bytes_step;
-            dst_offset += bytes_step;
+        DPU_LOG("Issue Get from %d src %p offset %lu dst %p offset %lu count %lu bytes %lu\n",
+                src_rank, src_addr, src_offset, dst_addr, dst_offset, src_count, nbytes);
+        ucp_worker_fence(hc->ucp_worker);
+        ucp_req = ucp_get_nbx(
+            hc->dpu_eps[src_rank], dst_addr, nbytes, (uint64_t)src_addr,
+            hc->host_src_rkeys[src_rank].rkey, &get_param);
+        status = _dpu_request_wait(hc->ucp_worker, ucp_req);
+        if (status != UCS_OK) {
+            return UCC_ERR_NO_RESOURCE;
         }
     }
 
     return UCC_OK;
+}
+
+/* Ensure host_rkey and alias_rkey can point to the same struct */
+static ucs_status_t dpu_import_host_rkey(ucp_context_h ucp_context,
+                                         ucp_worker_h  ucp_worker,
+                                         host_rkey_t *host_rkey,
+                                         host_rkey_t *alias_rkey)
+{
+    ucp_mem_map_params_t map_params = {0};
+    ucs_status_t         status;
+    ucp_rkey_h           h_rkey;
+    void                *alias_rkey_buf;
+    size_t               alias_rkey_buf_len;
+
+    status = ucp_worker_rkey_unpack(ucp_worker, host_rkey->rkey_buf, &h_rkey);
+    if (status != UCS_OK) {
+        fprintf(stderr, "ucp_worker_rkey_unpack failed: %s",
+                ucs_status_string(status));
+        return status;
+    }
+
+    map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+                            UCP_MEM_MAP_PARAM_FIELD_LENGTH |
+                            UCP_MEM_MAP_PARAM_FIELD_RKEY;
+    map_params.address = host_rkey->buf_addr;
+    map_params.length  = host_rkey->buf_len;
+    map_params.rkey    = h_rkey;
+
+    status = ucp_mem_map(ucp_context, &map_params, &alias_rkey->memh);
+    if (status != UCS_OK) {
+        fprintf(stderr, "ucp_mem_map failed: %s", ucs_status_string(status));
+        return status;
+    }
+
+    /* Pack alias rkey */
+    status = ucp_rkey_pack(ucp_context, alias_rkey->memh, &alias_rkey_buf, &alias_rkey_buf_len);
+    if (status != UCS_OK) {
+        fprintf(stderr, "ucp_rkey_pack failed: %s", ucs_status_string(status));
+        return status;
+    }
+
+    alias_rkey->buf_addr     = host_rkey->buf_addr;
+    alias_rkey->buf_len      = host_rkey->buf_len;
+    alias_rkey->rkey_buf_len = alias_rkey_buf_len;
+    memcpy(&alias_rkey->rkey_buf, alias_rkey_buf, alias_rkey_buf_len);
+
+    ucp_rkey_buffer_release(alias_rkey_buf);
+    ucp_rkey_destroy(h_rkey);
+    return UCS_OK;
 }
 
 static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
@@ -294,13 +306,13 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     void *src_buf = lsync;
     void *dst_buf = hc->world_lsyncs;
 
-    assert(NULL != lsync->rkeys.src_rkey_buf);
-    assert(NULL != lsync->rkeys.dst_rkey_buf);
-    assert(0    <  lsync->rkeys.src_rkey_len);
-    assert(0    <  lsync->rkeys.dst_rkey_len);
-    assert(NULL != lsync->rkeys.src_buf);
-    assert(NULL != lsync->rkeys.dst_buf);
-        
+    assert(lsync->src_rkey.rkey_buf && lsync->src_rkey.buf_addr && lsync->src_rkey.rkey_buf_len > 0 && lsync->src_rkey.buf_len > 0);
+    assert(lsync->dst_rkey.rkey_buf && lsync->dst_rkey.buf_addr && lsync->dst_rkey.rkey_buf_len > 0 && lsync->dst_rkey.buf_len > 0);
+
+    /* Create aliased rkey for host src and dst buffers */
+    dpu_import_host_rkey(hc->ucp_ctx, hc->ucp_worker, &lsync->src_rkey, &lsync->src_rkey);
+    dpu_import_host_rkey(hc->ucp_ctx, hc->ucp_worker, &lsync->dst_rkey, &lsync->dst_rkey);
+
     ucc_coll_args_t coll = {
         .coll_type = UCC_COLL_TYPE_ALLGATHER,
         .src.info = {
@@ -318,7 +330,7 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     };
 
     CTX_LOG("Issue Allgather from ranks %d src %p dst %p bytes %lu\n",
-            team_size, src_buf, dst_buf, sizeof(host_rkey_t));
+            team_size, src_buf, dst_buf, sizeof(dpu_put_sync_t));
     UCC_CHECK(ucc_collective_init(&coll, &request, team));
     UCC_CHECK(ucc_collective_post(request));
     while (UCC_OK != ucc_collective_test(request)) {
@@ -326,23 +338,22 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     }
     UCC_CHECK(ucc_collective_finalize(request));
 
-    memset(hc->host_rkeys, 0, sizeof(host_rkey_t) * hc->world_size);
+    memset(hc->host_src_rkeys, 0, sizeof(alias_rkey_t) * hc->world_size);
+    memset(hc->host_dst_rkeys, 0, sizeof(alias_rkey_t) * hc->world_size);
 
     for (i = 0; i < team_size; i++) {
         ep_rank  = dpu_get_world_rank(hc, i, lsync->team_id, ctx);
-        memcpy(&hc->host_rkeys[ep_rank], &hc->world_lsyncs[i].rkeys, sizeof(host_rkey_t));
-        assert(NULL != hc->host_rkeys[ep_rank].src_rkey_buf);
-        assert(NULL != hc->host_rkeys[ep_rank].dst_rkey_buf);
-        assert(0    <  hc->host_rkeys[ep_rank].src_rkey_len);
-        assert(0    <  hc->host_rkeys[ep_rank].dst_rkey_len);
-        status = ucp_ep_rkey_unpack(hc->host_eps[ep_rank], (void*)hc->host_rkeys[ep_rank].src_rkey_buf, &hc->host_src_rkeys[ep_rank]);
+        memcpy(&hc->host_src_rkeys[ep_rank].desc, &hc->world_lsyncs[i].src_rkey, sizeof(host_rkey_t));
+        memcpy(&hc->host_dst_rkeys[ep_rank].desc, &hc->world_lsyncs[i].dst_rkey, sizeof(host_rkey_t));
+
+        status = ucp_ep_rkey_unpack(hc->dpu_eps[ep_rank], (void*)hc->host_src_rkeys[ep_rank].desc.rkey_buf, &hc->host_src_rkeys[ep_rank].rkey);
         assert(UCS_OK == status);
-        assert(NULL != hc->host_rkeys[ep_rank].src_buf);
-        status = ucp_ep_rkey_unpack(hc->host_eps[ep_rank], (void*)hc->host_rkeys[ep_rank].dst_rkey_buf, &hc->host_dst_rkeys[ep_rank]);
+
+        status = ucp_ep_rkey_unpack(hc->dpu_eps[ep_rank], (void*)hc->host_dst_rkeys[ep_rank].desc.rkey_buf, &hc->host_dst_rkeys[ep_rank].rkey);
         assert(UCS_OK == status);
-        assert(NULL != hc->host_rkeys[ep_rank].dst_buf);
-        CTX_LOG("Rank %d with EP Rank %d  team_id  %d src buf %p dst buf %p\n", 
-                i, ep_rank, lsync->team_id, hc->host_rkeys[ep_rank].src_buf, hc->host_rkeys[ep_rank].dst_buf);
+        
+        CTX_LOG("Rank %d with EP Rank %d team_id %d src buf %p dst buf %p\n", 
+                i, ep_rank, lsync->team_id, hc->host_src_rkeys[ep_rank].desc.buf_addr, hc->host_dst_rkeys[ep_rank].desc.buf_addr);
     }
 
     hc->rail = lsync->rail;
@@ -379,10 +390,10 @@ static void dpu_coll_free_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
     UCC_CHECK(ucc_team_get_size(team, &team_size));
     CTX_LOG("Freeing src/dst rkeys for %u hosts\n", team_size);
     for (i = 0; i < team_size; i++) {
-        if (ctx->hc->host_src_rkeys[i] != NULL)
-            ucp_rkey_destroy(ctx->hc->host_src_rkeys[i]);
-        if (ctx->hc->host_dst_rkeys[i] != NULL)
-            ucp_rkey_destroy(ctx->hc->host_dst_rkeys[i]);
+        if (ctx->hc->host_src_rkeys[i].rkey != NULL)
+            ucp_rkey_destroy(ctx->hc->host_src_rkeys[i].rkey);
+        if (ctx->hc->host_dst_rkeys[i].rkey != NULL)
+            ucp_rkey_destroy(ctx->hc->host_dst_rkeys[i].rkey);
     }
 }
 
@@ -596,8 +607,8 @@ void *dpu_comm_thread(void *arg)
                 dpu_signal_comp_thread(ctx, thread_main_sync);
                 /* Don't send a response back to Host */
                 // dpu_mark_coll_done(ctx, lsync);
-                ucp_rkey_destroy(hc->src_rkey);
-                ucp_rkey_destroy(hc->dst_rkey);
+                // ucp_rkey_destroy(hc->src_rkey);
+                // ucp_rkey_destroy(hc->dst_rkey);
                 break;
 
             } else {
@@ -829,6 +840,7 @@ int main(int argc, char **argv)
         UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &worker_ctx.comm));
         UCC_CHECK(dpu_ucc_alloc_team(&ucc_glob, &comm_ctx.comm));
         dpu_hc_connect_remote_hosts(&hc, &comm_ctx.comm);
+        dpu_hc_connect_remote_dpus(&hc, &comm_ctx.comm);
         UCS_CHECK(dpu_send_init_completion(&hc));
         
         pthread_create(&worker_ctx.id, NULL, dpu_worker_thread, &worker_ctx);

@@ -152,15 +152,15 @@ static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
             status, ucs_status_string(status));
 }
 
-static ucs_status_t _dpu_flush_host_eps(dpu_hc_t *hc)
+static ucs_status_t _dpu_flush_eps(ucp_worker_h worker, ucp_ep_h *eps, int num_eps)
 {
     int i;
     ucp_request_param_t param = {};
     ucs_status_ptr_t request;
 
-    for (i = 0; i < hc->world_size; i++) {
-        request = ucp_ep_flush_nbx(hc->host_eps[i], &param);
-        _dpu_request_wait(hc->ucp_worker, request);
+    for (i = 0; i < num_eps; i++) {
+        request = ucp_ep_flush_nbx(eps[i], &param);
+        _dpu_request_wait(worker, request);
     }
     return UCS_OK;
 }
@@ -443,7 +443,7 @@ static ucs_status_t _dpu_create_remote_host_eps(dpu_hc_t *hc, dpu_ucc_comm_t *co
     ucp_ep_params_t ep_params;
     int i;
     void *remote_addrs = NULL;
-    size_t rem_worker_addr_len = hc->rem_worker_addr_len;
+    size_t rem_worker_addr_len = 128; // hc->rem_worker_addr_len;
     void *rem_worker_addr = hc->rem_worker_addr;
 
     /* Allgather Host EP addresses */
@@ -474,10 +474,9 @@ static ucs_status_t _dpu_create_remote_host_eps(dpu_hc_t *hc, dpu_ucc_comm_t *co
         }
     }
 
-    hc->host_rkeys = calloc(hc->world_size, sizeof(host_rkey_t));
-    hc->host_src_rkeys = calloc(hc->world_size, sizeof(ucp_rkey_h));
-    hc->host_dst_rkeys = calloc(hc->world_size, sizeof(ucp_rkey_h));
-    hc->world_lsyncs = calloc(hc->world_size, sizeof(dpu_put_sync_t));
+    hc->host_src_rkeys  = calloc(hc->world_size, sizeof(alias_rkey_t));
+    hc->host_dst_rkeys  = calloc(hc->world_size, sizeof(alias_rkey_t));
+    hc->world_lsyncs    = calloc(hc->world_size, sizeof(dpu_put_sync_t));
     
     memset(&hc->req_param, 0, sizeof(hc->req_param));
     // hc->req_param.op_attr_mask = UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
@@ -512,9 +511,79 @@ static int _dpu_close_host_eps(dpu_hc_t *hc)
         }
     }
     free(hc->host_eps);
-    free(hc->host_rkeys);
     free(hc->host_src_rkeys);
     free(hc->host_dst_rkeys);
+    free(hc->world_lsyncs);
+    return ret;
+}
+
+static ucs_status_t _dpu_create_remote_dpu_eps(dpu_hc_t *hc, dpu_ucc_comm_t *comm)
+{
+    ucs_status_t status;
+    ucp_ep_params_t ep_params;
+    int i;
+    void *remote_addrs = NULL;
+    size_t dpu_worker_addr_len = 128;
+    void *dpu_worker_addr = hc->worker_attr.address;
+
+    /* Allgather DPU EP addresses */
+    hc->dpu_eps = calloc(hc->world_size, sizeof(ucp_ep_h));
+    remote_addrs = calloc(hc->world_size, dpu_worker_addr_len);
+    dpu_coll_collect_host_addrs(comm, dpu_worker_addr, dpu_worker_addr_len, remote_addrs);
+
+    ep_params.field_mask    = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
+                              UCP_EP_PARAM_FIELD_ERR_HANDLER |
+                              UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
+    ep_params.err_mode		= UCP_ERR_HANDLING_MODE_PEER;
+    ep_params.err_handler.cb    = err_cb;
+
+    /* Connect to all remote hosts */
+    for (i = 0; i < hc->world_size; i++) {
+        /* Skip Local DPU, Already Connected */
+        if (i == hc->world_rank) {
+            // hc->dpu_eps[i] = hc->localhost_ep;
+            // continue;
+        }
+
+        ep_params.address = remote_addrs + i * dpu_worker_addr_len;
+        status = ucp_ep_create(hc->ucp_worker, &ep_params, &hc->dpu_eps[i]);
+        if (status != UCS_OK) {
+            fprintf(stderr, "failed to create endpoint on dpu to host %d (%s)\n",
+                    i, ucs_status_string(status));
+            return UCC_ERR_NO_MESSAGE;
+        }
+    }
+
+    return UCC_OK;
+}
+
+static int _dpu_close_dpu_eps(dpu_hc_t *hc)
+{
+    ucp_request_param_t param;
+    ucs_status_t status;
+    void *close_req;
+    int ret = UCC_OK;
+    int i;
+
+    param.op_attr_mask  = UCP_OP_ATTR_FIELD_FLAGS;
+    param.flags         = UCP_EP_CLOSE_FLAG_FORCE;
+
+    for (i = 0; i < hc->world_size; i++) {
+        close_req = ucp_ep_close_nbx(hc->dpu_eps[i], &param);
+        if (UCS_PTR_IS_PTR(close_req)) {
+            do {
+                ucp_worker_progress(hc->ucp_worker);
+                status = ucp_request_check_status(close_req);
+            } while (status == UCS_INPROGRESS);
+
+            ucp_request_free(close_req);
+        }
+        else if (UCS_PTR_STATUS(close_req) != UCS_OK) {
+            fprintf(stderr, "failed to close ep %p\n", (void *)hc->dpu_eps[i]);
+            ret = UCC_ERR_NO_MESSAGE;
+        }
+    }
+    free(hc->dpu_eps);
     return ret;
 }
 
@@ -651,9 +720,29 @@ int dpu_hc_connect_remote_hosts(dpu_hc_t *hc, dpu_ucc_comm_t *comm)
         goto err;
     }
 
-    ret = _dpu_flush_host_eps(hc);
+    ret = _dpu_flush_eps(hc->ucp_worker, hc->host_eps, hc->world_size);
     if (ret) {
-        fprintf(stderr, "ep flush failed!\n");
+        fprintf(stderr, "host ep flush failed!\n");
+        goto err;
+    }
+
+err:
+    return ret;
+}
+
+int dpu_hc_connect_remote_dpus(dpu_hc_t *hc, dpu_ucc_comm_t *comm)
+{
+    int ret;
+
+    if (ret = _dpu_create_remote_dpu_eps(hc, comm)) {
+        fprintf(stderr, "_dpu_create_remote_dpu_eps failed!\n");
+        ret = UCC_ERR_NO_MESSAGE;
+        goto err;
+    }
+
+    ret = _dpu_flush_eps(hc->ucp_worker, hc->dpu_eps, hc->world_size);
+    if (ret) {
+        fprintf(stderr, "dpu ep flush failed!\n");
         goto err;
     }
 
@@ -676,11 +765,11 @@ int dpu_hc_wait(dpu_hc_t *hc, uint32_t next_coll_id)
     DPU_LOG("Got next coll id from host: %u was expecting %u\n", lsync->coll_id, next_coll_id);
     assert(lsync->coll_id == next_coll_id);
 
-    host_rkey_t *rkeys = &lsync->rkeys;
+    // host_rkey_t *rkeys = &lsync->rkeys;
 
-    status = ucp_ep_rkey_unpack(hc->localhost_ep, (void*)rkeys->src_rkey_buf, &hc->src_rkey);
+    // status = ucp_ep_rkey_unpack(hc->localhost_ep, (void*)rkeys->src_rkey_buf, &hc->src_rkey);
 
-    status = ucp_ep_rkey_unpack(hc->localhost_ep, (void*)rkeys->dst_rkey_buf, &hc->dst_rkey);
+    // status = ucp_ep_rkey_unpack(hc->localhost_ep, (void*)rkeys->dst_rkey_buf, &hc->dst_rkey);
 
     return 0;
 }
@@ -706,8 +795,8 @@ int dpu_hc_reply(dpu_hc_t *hc, dpu_get_sync_t *coll_sync)
         return -1;
     }
 
-    ucp_rkey_destroy(hc->src_rkey);
-    ucp_rkey_destroy(hc->dst_rkey);
+    // ucp_rkey_destroy(hc->src_rkey);
+    // ucp_rkey_destroy(hc->dst_rkey);
     _dpu_hc_reset_pipeline(hc);
     return 0;
 }
@@ -764,7 +853,7 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     }
 
     size_t data_size = count * dt_size;
-    void *src_addr = hc->host_rkeys[ep_src_rank].src_buf + get_offset;
+    void *src_addr = hc->host_src_rkeys[ep_src_rank].desc.buf_addr + get_offset;
     void *dst_addr = getbuf->buf;
 
     DPU_LOG("Issue Get from %d offset %lu src %p dst %p count %lu bytes %lu host_team_size: %d \n",
@@ -772,8 +861,8 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     
     ucp_worker_fence(hc->ucp_worker);
     getbuf->ucp_req =
-            ucp_get_nbx(hc->host_eps[ep_src_rank], dst_addr, data_size,
-            (uint64_t)src_addr, hc->host_src_rkeys[ep_src_rank], &hc->req_param);
+            ucp_get_nbx(hc->dpu_eps[ep_src_rank], dst_addr, data_size,
+            (uint64_t)src_addr, hc->host_src_rkeys[ep_src_rank].rkey, &hc->req_param);
     
     stage->src_rank = (src_rank + 1) % host_team_size;
     return UCS_OK;
@@ -796,7 +885,7 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
 
     size_t data_size = count * dt_size;
     void *src_addr = accbuf->buf;
-    void *dst_addr = hc->host_rkeys[ep_dst_rank].dst_buf + put_offset;
+    void *dst_addr = hc->host_dst_rkeys[ep_dst_rank].desc.buf_addr + put_offset;
 
     DPU_LOG("Issue Put to %d offset %lu src %p dst %p count %lu bytes %lu host_team_size: %d\n",
             dst_rank, put_offset, src_addr, dst_addr, count, data_size, host_team_size);
@@ -808,7 +897,7 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     ucp_worker_fence(hc->ucp_worker);
     accbuf->ucp_req =
             ucp_put_nbx(hc->host_eps[ep_dst_rank], src_addr, data_size,
-            (uint64_t)dst_addr, hc->host_dst_rkeys[ep_dst_rank], &hc->req_param);
+            (uint64_t)dst_addr, hc->host_dst_rkeys[ep_dst_rank].rkey, &hc->req_param);
 
     stage->dst_rank = (dst_rank + 1) % host_team_size;
     return UCS_OK;
@@ -964,7 +1053,7 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
                 stage->done_put++;
             }
             /* Wait for completion */
-            _dpu_flush_host_eps(hc);
+            _dpu_flush_eps(hc->ucp_worker, hc->host_eps, hc->world_size);
 
         } else if (accbuf->state == SENDRECV && accbuf->count > 0) {
             request = accbuf->ucp_req;
@@ -1022,11 +1111,13 @@ ucs_status_t dpu_send_init_completion(dpu_hc_t *hc)
 
 int dpu_hc_reset_job(dpu_hc_t *hc)
 {
-    _dpu_flush_host_eps(hc);
+    _dpu_flush_eps(hc->ucp_worker, hc->dpu_eps, hc->world_size);
+    _dpu_flush_eps(hc->ucp_worker, hc->host_eps, hc->world_size);
     _dpu_worker_flush(hc);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.in);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.out);
     _dpu_hc_buffer_free(hc, &hc->mem_segs.sync);
+    _dpu_close_dpu_eps(hc);
     _dpu_close_host_eps(hc);
     _dpu_ucx_fini(hc);
     printf("# Completed Job Id %d\n", hc->job_id);
