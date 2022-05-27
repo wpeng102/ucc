@@ -35,6 +35,71 @@ static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
                     status, ucs_status_string(status));
 }
 
+static ucs_status_t
+ucc_tl_dpu_rcache_mem_reg_cb(void *context, ucc_rcache_t *rcache,
+                               void *arg, ucc_rcache_region_t *rregion,
+                               uint16_t flags)
+{
+    ucc_tl_dpu_connect_t       *connect = (ucc_tl_dpu_connect_t*)context;
+    ucc_tl_dpu_context_t       *ctx     = connect->dpu_context;
+    ucc_tl_dpu_rcache_region_t *region;
+    void                       *address;
+    size_t                      length;
+    ucs_status_t                ret;
+
+    address = (void*)rregion->super.start;
+    length  = (size_t)(rregion->super.end - rregion->super.start);
+    region  = ucc_derived_of(rregion, ucc_tl_dpu_rcache_region_t);
+
+    ret = dpu_coll_reg_mr(connect->ucp_context,
+                          address, length, &region->reg);
+
+    if (ret != UCS_OK) {
+        tl_error(ctx->super.super.lib, "dpu_coll_reg_mr failed(%d) addr:%p len:%zd",
+                 ret, address, length);
+        return UCS_ERR_INVALID_PARAM;
+    } else {
+        tl_warn(ctx->super.super.lib, "dpu_coll_reg_mr_cb region:%p addr:%p len:%zd",
+                 rregion, address, length);
+        return UCS_OK;
+    }
+}
+
+static void ucc_tl_dpu_rcache_mem_dereg_cb(void *context, ucc_rcache_t *rcache,
+                                             ucc_rcache_region_t *rregion)
+{
+    ucc_tl_dpu_connect_t       *connect = (ucc_tl_dpu_connect_t*)context;
+    ucc_tl_dpu_context_t       *ctx     = connect->dpu_context;
+    ucc_tl_dpu_rcache_region_t *region  = ucc_derived_of(rregion,
+                                                ucc_tl_dpu_rcache_region_t);
+    ucs_status_t                ret;
+
+    ret = dpu_coll_dereg_mr(connect->ucp_context, &region->reg);
+    if (ret != UCS_OK) {
+        tl_error(ctx->super.super.lib, "dpu_coll_dereg_mr failed(%d)", ret);
+    } else {
+        tl_warn(ctx->super.super.lib, "dpu_coll_dereg_mr_cb region:%p addr:%p len:%zd",
+                 rregion, region->reg.address, region->reg.length);
+    }
+}
+
+static void
+ucc_tl_dpu_rcache_dump_region_cb(void *context, ucs_rcache_t *rcache,
+                                   ucs_rcache_region_t *rregion, char *buf,
+                                   size_t max)
+{
+    ucc_tl_dpu_rcache_region_t *region = ucc_derived_of(rregion,
+                                           ucc_tl_dpu_rcache_region_t);
+
+    snprintf(buf, max, "addr %p len %zu", region->reg.address, region->reg.length);
+}
+
+static ucc_rcache_ops_t ucc_tl_dpu_rcache_ops = {
+    .mem_reg     = ucc_tl_dpu_rcache_mem_reg_cb,
+    .mem_dereg   = ucc_tl_dpu_rcache_mem_dereg_cb,
+    .dump_region = ucc_tl_dpu_rcache_dump_region_cb
+};
+
 static int _server_connect(ucc_tl_dpu_context_t *ctx, char *hname, uint16_t port)
 {
     int sock = 0, n;
@@ -293,14 +358,41 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
             goto err_cleanup_worker;
         }
 
-        self->dpu_ctx_list[rail].ucp_context                 = ucp_context;
-        self->dpu_ctx_list[rail].ucp_worker                  = ucp_worker;
-        self->dpu_ctx_list[rail].ucp_ep                      = ucp_ep;
-        self->dpu_ctx_list[rail].inflight                    = 0;
-        self->dpu_ctx_list[rail].coll_id_issued              = 0;
-        self->dpu_ctx_list[rail].coll_id_completed           = 0;
-        self->dpu_ctx_list[rail].get_sync.count_serviced     = 0;
-        self->dpu_ctx_list[rail].get_sync.coll_id            = 0;
+        ucc_tl_dpu_connect_t *dpu_connect        = &self->dpu_ctx_list[rail];
+        dpu_connect->dpu_context                 = self;
+        dpu_connect->ucp_context                 = ucp_context;
+        dpu_connect->ucp_worker                  = ucp_worker;
+        dpu_connect->ucp_ep                      = ucp_ep;
+        dpu_connect->inflight                    = 0;
+        dpu_connect->coll_id_issued              = 0;
+        dpu_connect->coll_id_completed           = 0;
+        dpu_connect->get_sync.count_serviced     = 0;
+        dpu_connect->get_sync.coll_id            = 0;
+
+        if (self->cfg.use_rcache) {
+            ucc_rcache_params_t rcache_params = {
+                .alignment          = 64,
+                .ucm_event_priority = 1000,
+                .max_regions        = ULONG_MAX,
+                .max_size           = SIZE_MAX,
+                .region_struct_size = sizeof(ucc_tl_dpu_rcache_region_t),
+                .max_alignment      = getpagesize(),
+                .ucm_events         = UCM_EVENT_VM_UNMAPPED | UCM_EVENT_MEM_TYPE_FREE,
+                .context            = dpu_connect,
+                .ops                = &ucc_tl_dpu_rcache_ops,
+                .flags              = 0,
+            };
+
+            ucc_status = ucc_rcache_create(&rcache_params, "DPU", &dpu_connect->rcache);
+            if (ucc_status != UCC_OK) {
+                tl_error(self->super.super.lib, "failed to create rcache (%s)",
+                         ucc_status_string(ucc_status));
+                ucc_status = UCC_ERR_NO_RESOURCE;
+                goto err_cleanup_rcache;
+            } else {
+                tl_info(self->super.super.lib, "Created DPU rcache");
+            }
+        }
     }
 
     ucc_status = ucc_mpool_init(&self->req_mp, 0,
@@ -319,9 +411,15 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
 err_cleanup_mpool:
     ucc_mpool_cleanup(&self->req_mp, 1);
+err_cleanup_rcache:
+    for (i = 0; i < rail-1; i++) {
+        ucc_rcache_destroy(self->dpu_ctx_list[i].rcache);
+    }
 err_cleanup_worker:
-    ucp_worker_destroy(self->dpu_ctx_list[rail].ucp_worker);
-    ucp_cleanup(self->dpu_ctx_list[rail].ucp_context);
+    for (i = 0; i < rail-1; i++) {
+        ucp_worker_destroy(self->dpu_ctx_list[i].ucp_worker);
+        ucp_cleanup(self->dpu_ctx_list[i].ucp_context);
+    }
 err_cleanup_context:
     for (i = 0; i < rail-1; i++) {
         ucp_worker_destroy(self->dpu_ctx_list[i].ucp_worker);
@@ -342,23 +440,26 @@ UCC_CLASS_CLEANUP_FUNC(ucc_tl_dpu_context_t)
     tl_info(self->super.super.lib, "finalizing tl context: %p", self);
     
     for (rail = 0; rail < self->dpu_per_node_cnt; rail++) {
-    
-        ucp_worker_flush(self->dpu_ctx_list[rail].ucp_worker);
+        ucc_tl_dpu_connect_t *dpu_connect = &self->dpu_ctx_list[rail];
+        ucp_worker_flush(dpu_connect->ucp_worker);
 
         param.op_attr_mask  = UCP_OP_ATTR_FIELD_FLAGS;
         param.flags         = UCP_EP_CLOSE_FLAG_FORCE;
-        close_req           = ucp_ep_close_nbx(self->dpu_ctx_list[rail].ucp_ep, &param);
+        close_req           = ucp_ep_close_nbx(dpu_connect->ucp_ep, &param);
         if (UCS_PTR_IS_PTR(close_req)) {
             do {
-                ucp_worker_progress(self->dpu_ctx_list[rail].ucp_worker);
+                ucp_worker_progress(dpu_connect->ucp_worker);
                 ucs_status = ucp_request_check_status(close_req);
             } while (ucs_status == UCS_INPROGRESS);
             ucp_request_free (close_req);
         } else if (UCS_PTR_STATUS(close_req) != UCS_OK) {
-            tl_error(self->super.super.lib, "failed to close ep %p\n", (void *)self->dpu_ctx_list[rail].ucp_ep);
+            tl_error(self->super.super.lib, "failed to close ep %p\n", (void *)dpu_connect->ucp_ep);
         }
-        ucp_worker_destroy(self->dpu_ctx_list[rail].ucp_worker);
-        ucp_cleanup(self->dpu_ctx_list[rail].ucp_context);
+        if (dpu_connect->rcache) {
+            ucc_rcache_destroy(dpu_connect->rcache);
+        }
+        ucp_worker_destroy(dpu_connect->ucp_worker);
+        ucp_cleanup(dpu_connect->ucp_context);
     }
 
     ucc_mpool_cleanup(&self->req_mp, 1);

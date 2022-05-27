@@ -51,6 +51,12 @@ static ucs_config_field_t ucc_tl_dpu_context_config_table[] = {
      UCC_CONFIG_TYPE_ULUNITS
     },
 
+    {"USE_RCACHE", "y",
+     "Use registration cache for DPU",
+     ucc_offsetof(ucc_tl_dpu_context_config_t, use_rcache),
+     UCC_CONFIG_TYPE_BOOL
+    },
+
     {NULL}};
 
 UCC_CLASS_DEFINE_NEW_FUNC(ucc_tl_dpu_lib_t, ucc_base_lib_t,

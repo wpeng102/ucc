@@ -10,6 +10,7 @@
 #include "components/tl/ucc_tl.h"
 #include "components/tl/ucc_tl_log.h"
 #include "utils/ucc_mpool.h"
+#include "utils/ucc_rcache.h"
 #include <ucp/api/ucp.h>
 #include <limits.h>
 
@@ -49,6 +50,7 @@ typedef struct ucc_tl_dpu_context_config {
     char                    *host_dpu_list;
     size_t                  pipeline_buffer_size;
     size_t                  pipeline_num_buffers;
+    int                     use_rcache;
 } ucc_tl_dpu_context_config_t;
 
 typedef struct ucc_tl_dpu_lib {
@@ -64,6 +66,7 @@ typedef struct ucc_tl_dpu_get_sync_t {
 } ucc_tl_dpu_get_sync_t;
 
 typedef struct ucc_tl_dpu_connect {
+    struct ucc_tl_dpu_context  *dpu_context;
     ucp_context_h               ucp_context;
     ucp_worker_h                ucp_worker;
     uint64_t                    rem_ctrl_seg;
@@ -73,6 +76,7 @@ typedef struct ucc_tl_dpu_connect {
     ucc_tl_dpu_get_sync_t       get_sync; 
     ucp_ep_h                    ucp_ep;
     volatile size_t             inflight;
+    ucc_rcache_t               *rcache;
 } ucc_tl_dpu_connect_t;
 
 typedef struct ucc_tl_dpu_context {
@@ -116,13 +120,13 @@ typedef struct ucc_tl_dpu_put_sync_t {
     uint32_t                 coll_id;
 } ucc_tl_dpu_put_sync_t;
 
-typedef struct ucc_tl_dpu_rkey_t {
+typedef struct ucc_tl_dpu_reg_t {
     ucp_mem_h memh;
     void     *address;
     size_t    length;
     void     *rkey_buf;
     size_t    rkey_buf_size;
-} ucc_tl_dpu_rkey_t;
+} ucc_tl_dpu_reg_t;
 
 typedef struct ucc_tl_dpu_sync {
     uint32_t              coll_id_issued;
@@ -150,8 +154,8 @@ typedef struct ucc_tl_dpu_sub_task {
     ucc_tl_dpu_put_sync_t    put_sync;
     ucc_tl_dpu_get_sync_t    get_sync;
     ucc_tl_dpu_task_req_t    task_reqs;
-    ucc_tl_dpu_rkey_t        src_rkey;
-    ucc_tl_dpu_rkey_t        dst_rkey;
+    ucc_tl_dpu_reg_t        *src_reg;
+    ucc_tl_dpu_reg_t        *dst_reg;
     volatile ucc_tl_dpu_task_status_t status;
 } ucc_tl_dpu_sub_task_t;
 
@@ -173,6 +177,11 @@ typedef struct ucc_tl_dpu {
     ucc_tl_dpu_config_t config;
 } ucc_tl_dpu_t;
 
+typedef struct ucc_tl_dpu_rcache_region {
+    ucc_rcache_region_t  super;
+    ucc_tl_dpu_reg_t     reg;
+} ucc_tl_dpu_rcache_region_t;
+
 #define UCC_TL_DPU_SUPPORTED_COLLS \
     (UCC_COLL_TYPE_ALLREDUCE | UCC_COLL_TYPE_ALLTOALL | UCC_COLL_TYPE_ALLTOALLV)
 
@@ -188,7 +197,8 @@ typedef struct ucc_tl_dpu {
 ucc_status_t ucc_tl_dpu_req_test(ucs_status_ptr_t *req_p, ucp_worker_h worker);
 ucc_status_t ucc_tl_dpu_req_check(ucc_tl_dpu_team_t *team, ucs_status_ptr_t req);
 ucc_status_t ucc_tl_dpu_req_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t req);
-ucs_status_t ucc_tl_dpu_register_buf( ucp_context_h ucp_ctx, void *base, size_t size, ucc_tl_dpu_rkey_t *rkey);
-ucc_status_t ucc_tl_dpu_deregister_buf( ucp_context_h ucp_ctx, ucc_tl_dpu_rkey_t *rkey);
+
+ucs_status_t dpu_coll_reg_mr(ucp_context_h ucp_context, void *address, size_t length, ucc_tl_dpu_reg_t *reg);
+ucs_status_t dpu_coll_dereg_mr(ucp_context_h ucp_context, ucc_tl_dpu_reg_t *reg);
 
 #endif
