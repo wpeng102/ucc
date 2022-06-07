@@ -60,7 +60,7 @@ ucc_tl_dpu_rcache_mem_reg_cb(void *context, ucc_rcache_t *rcache,
         return UCS_ERR_INVALID_PARAM;
     } else {
         tl_warn(ctx->super.super.lib, "dpu_coll_reg_mr_cb region:%p addr:%p len:%zd",
-                 rregion, address, length);
+                &region->reg, region->reg.address, region->reg.length);
         return UCS_OK;
     }
 }
@@ -79,7 +79,7 @@ static void ucc_tl_dpu_rcache_mem_dereg_cb(void *context, ucc_rcache_t *rcache,
         tl_error(ctx->super.super.lib, "dpu_coll_dereg_mr failed(%d)", ret);
     } else {
         tl_warn(ctx->super.super.lib, "dpu_coll_dereg_mr_cb region:%p addr:%p len:%zd",
-                 rregion, region->reg.address, region->reg.length);
+                &region->reg, region->reg.address, region->reg.length);
     }
 }
 
@@ -160,6 +160,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
     UCC_CLASS_CALL_SUPER_INIT(ucc_tl_context_t, &tl_dpu_config->super,
                               params->context);
+    memcpy(&self->cfg, tl_dpu_config, sizeof(*tl_dpu_config));
 
     /* Find  DPU based on the host-dpu list */
     gethostname(hname, sizeof(hname) - 1);
@@ -167,12 +168,12 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
     char *h = calloc(1, 256), *dpu;
     FILE *fp = NULL;
 
-    if (strcmp(tl_dpu_config->host_dpu_list,"") != 0) {
+    if (strcmp(self->cfg.host_dpu_list,"") != 0) {
 
-        fp = fopen(tl_dpu_config->host_dpu_list, "r");
+        fp = fopen(self->cfg.host_dpu_list, "r");
         if (fp == NULL) {
             tl_error(self->super.super.lib,
-                "Unable to open host_dpu_list \"%s\", disabling dpu team\n", tl_dpu_config->host_dpu_list);
+                "Unable to open host_dpu_list \"%s\", disabling dpu team\n", self->cfg.host_dpu_list);
             ucc_status = UCC_ERR_NO_MESSAGE;
         }
         else {
@@ -260,7 +261,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
         tl_info(self->super.super.lib, "Connecting to %s with hca id %s", dpu, dpu_hcanames[rail]);
 
-        sockfd = _server_connect(self, dpu, tl_dpu_config->server_port);
+        sockfd = _server_connect(self, dpu, self->cfg.server_port);
 
         memset(&ucp_context, 0, sizeof(ucp_context_h));
         ucp_config_t *ucp_config;
@@ -298,13 +299,13 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
             ucc_status = UCC_ERR_NO_MESSAGE;
             goto err;
         }
-        ret = send(sockfd, &tl_dpu_config->pipeline_buffer_size, sizeof(size_t), 0);
+        ret = send(sockfd, &self->cfg.pipeline_buffer_size, sizeof(size_t), 0);
         if (ret < 0) {
             tl_error(self->super.super.lib, "send pipeline size failed");
             ucc_status = UCC_ERR_NO_MESSAGE;
             goto err;
         }
-        ret = send(sockfd, &tl_dpu_config->pipeline_num_buffers, sizeof(size_t), 0);
+        ret = send(sockfd, &self->cfg.pipeline_num_buffers, sizeof(size_t), 0);
         if (ret < 0) {
             tl_error(self->super.super.lib, "send pipeline num buffers failed");
             ucc_status = UCC_ERR_NO_MESSAGE;
@@ -358,16 +359,17 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
             goto err_cleanup_worker;
         }
 
-        ucc_tl_dpu_connect_t *dpu_connect        = &self->dpu_ctx_list[rail];
-        dpu_connect->dpu_context                 = self;
-        dpu_connect->ucp_context                 = ucp_context;
-        dpu_connect->ucp_worker                  = ucp_worker;
-        dpu_connect->ucp_ep                      = ucp_ep;
-        dpu_connect->inflight                    = 0;
-        dpu_connect->coll_id_issued              = 0;
-        dpu_connect->coll_id_completed           = 0;
-        dpu_connect->get_sync.count_serviced     = 0;
-        dpu_connect->get_sync.coll_id            = 0;
+        ucc_tl_dpu_connect_t *dpu_connect      = &self->dpu_ctx_list[rail];
+        dpu_connect->dpu_context               = self;
+        dpu_connect->ucp_context               = ucp_context;
+        dpu_connect->ucp_worker                = ucp_worker;
+        dpu_connect->ucp_ep                    = ucp_ep;
+        dpu_connect->inflight                  = 0;
+        dpu_connect->coll_id_issued            = 0;
+        dpu_connect->coll_id_completed         = 0;
+        dpu_connect->get_sync.count_serviced   = 0;
+        dpu_connect->get_sync.coll_id          = 0;
+        dpu_connect->rcache                    = NULL;
 
         if (self->cfg.use_rcache) {
             ucc_rcache_params_t rcache_params = {
@@ -390,8 +392,10 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
                 ucc_status = UCC_ERR_NO_RESOURCE;
                 goto err_cleanup_rcache;
             } else {
-                tl_info(self->super.super.lib, "Created DPU rcache");
+                tl_warn(self->super.super.lib, "Created DPU rcache");
             }
+        } else {
+            tl_warn(self->super.super.lib, "Disabled DPU rcache");
         }
     }
 

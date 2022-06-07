@@ -129,6 +129,10 @@ ucs_status_t dpu_coll_dereg_mr(ucp_context_h ucp_ctx,
         goto out;
     }
     ucp_rkey_buffer_release(reg->rkey_buf);
+    reg->address        = NULL;
+    reg->length         = 0;
+    reg->rkey_buf       = NULL;
+    reg->rkey_buf_size  = 0;
 out:
     return status;
 }

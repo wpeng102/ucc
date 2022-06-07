@@ -253,6 +253,9 @@ static ucs_status_t dpu_import_host_rkey(ucp_context_h ucp_context,
     void                *alias_rkey_buf;
     size_t               alias_rkey_buf_len;
 
+    fprintf(stderr, "host rkey %p addr %p len %zu rkey len %zu\n",
+                    host_rkey, host_rkey->buf_addr, host_rkey->buf_len, host_rkey->rkey_buf_len);
+
     status = ucp_worker_rkey_unpack(ucp_worker, host_rkey->rkey_buf, &h_rkey);
     if (status != UCS_OK) {
         fprintf(stderr, "ucp_worker_rkey_unpack failed: %s",
@@ -284,6 +287,9 @@ static ucs_status_t dpu_import_host_rkey(ucp_context_h ucp_context,
     alias_rkey->buf_len      = host_rkey->buf_len;
     alias_rkey->rkey_buf_len = alias_rkey_buf_len;
     memcpy(&alias_rkey->rkey_buf, alias_rkey_buf, alias_rkey_buf_len);
+
+    fprintf(stderr, "alias rkey %p addr %p len %zu rkey len %zu\n",
+                    alias_rkey, alias_rkey->buf_addr, alias_rkey->buf_len, alias_rkey->rkey_buf_len);
 
     ucp_rkey_buffer_release(alias_rkey_buf);
     ucp_rkey_destroy(h_rkey);
