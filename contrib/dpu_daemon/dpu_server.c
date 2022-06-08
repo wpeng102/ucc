@@ -134,18 +134,19 @@ static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_syn
     assert(ctx->idx == THREAD_IDX_COMM);
 
     ucs_status_t status;
-    size_t team_rank, team_size;
+    uint32_t team_size;
+    uint64_t team_rank;
     dpu_hc_t *hc = ctx->hc;
     ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
-    UCC_CHECK(ucc_team_get_size(team, (uint32_t*)&team_size));
-    UCC_CHECK(ucc_team_get_my_ep(team, (uint64_t*)&team_rank));
+    UCC_CHECK(ucc_team_get_size(team, &team_size));
+    UCC_CHECK(ucc_team_get_my_ep(team, &team_rank));
 
     size_t count_total   = lsync->count_total;
     size_t my_count      = count_total / team_size;
     ucc_datatype_t dtype = lsync->coll_args.src.info.datatype;
     size_t dt_size       = dpu_ucc_dt_size(dtype);
 
-    CTX_LOG("Doing alltoall on team id %d team size %d count %lu\n", lsync->team_id, team_size, count_total);
+    CTX_LOG("Doing alltoall on team id %d team size %ld count %lu\n", lsync->team_id, team_size, count_total);
 
     for(int i = 0; i < team_size; i++) {
         int src_rank = (team_rank + i) % team_size;
@@ -183,14 +184,15 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
     assert(ctx->idx == THREAD_IDX_COMM);
 
     ucs_status_t status;
-    ucc_rank_t team_rank, team_size;
+    uint32_t team_size;
+    uint64_t team_rank;
     dpu_hc_t *hc = ctx->hc;
     ucc_coll_args_t *args = &lsync->coll_args;
     ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
-    UCC_CHECK(ucc_team_get_size(team, (uint32_t*)&team_size));
-    UCC_CHECK(ucc_team_get_my_ep(team, (uint64_t*)&team_rank));
+    UCC_CHECK(ucc_team_get_size(team, &team_size));
+    UCC_CHECK(ucc_team_get_my_ep(team, &team_rank));
 
-    CTX_LOG("Doing alltoallv on team id %d team size %d\n", lsync->team_id, team_size);
+    CTX_LOG("Doing alltoallv on team id %d team size %ld\n", lsync->team_id, team_size);
 
     for(int i = 0; i < team_size; i++) {
         int src_rank = (team_rank + i) % team_size;
