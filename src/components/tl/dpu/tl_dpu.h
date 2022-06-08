@@ -95,6 +95,7 @@ typedef struct ucc_tl_dpu_put_rkey_t {
     size_t  rkey_buf_len;
     void   *buf_addr;
     size_t  buf_length;
+    size_t  buf_offset;
     ucp_mem_h memh;
 } ucc_tl_dpu_put_rkey_t;
 
@@ -124,6 +125,7 @@ typedef struct ucc_tl_dpu_reg_t {
     ucp_mem_h memh;
     void     *address;
     size_t    length;
+    size_t    offset;
     void     *rkey_buf;
     size_t    rkey_buf_size;
 } ucc_tl_dpu_reg_t;

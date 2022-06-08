@@ -69,7 +69,7 @@ ucc_status_t ucc_tl_dpu_req_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t reque
 }
 
 ucs_status_t dpu_coll_reg_mr(ucp_context_h ucp_ctx,
-                    void *base, size_t size,
+                    void *addr, size_t size,
                     ucc_tl_dpu_reg_t *reg)
 {
     int status;
@@ -80,7 +80,7 @@ ucs_status_t dpu_coll_reg_mr(ucp_context_h ucp_ctx,
                       UCP_MEM_MAP_PARAM_FIELD_LENGTH  |
                       UCP_MEM_MAP_PARAM_FIELD_PEER_ID ,
         .flags      = UCP_MEM_MAP_SHARED,
-        .address    = base,
+        .address    = addr,
         .length     = size,
         .peer_id    = 0, /* TODO: gvmi id */
     };
@@ -100,10 +100,11 @@ ucs_status_t dpu_coll_reg_mr(ucp_context_h ucp_ctx,
         goto err_map;
     }
     assert(mem_attr.length >= size);
-    assert(mem_attr.address <= base);
+    assert(mem_attr.address <= addr);
 
-    reg->address = base;
-    reg->length  = size;
+    reg->address = mem_attr.address;
+    reg->length  = mem_attr.length;
+    reg->offset  = addr - mem_attr.address;
 
     status = ucp_rkey_pack(ucp_ctx, reg->memh, &reg->rkey_buf, &reg->rkey_buf_size);
     if (status != UCS_OK) {
@@ -180,7 +181,7 @@ ucc_status_t ucc_tl_dpu_deregister_buf(ucc_tl_dpu_connect_t *ctx,
     ucc_status_t                status;
     ucc_tl_dpu_rcache_region_t *region;
     ucc_tl_dpu_context_t       *dpu_ctx = ctx->dpu_context;
-    tl_warn(dpu_ctx->super.super.lib, "ucc_tl_dpu_register_buf region:%p addr:%p len:%zd", reg, reg->address, reg->length);
+    tl_warn(dpu_ctx->super.super.lib, "ucc_tl_dpu_deregister_buf region:%p addr:%p len:%zd", reg, reg->address, reg->length);
 
     if (ctx->rcache) {
         region = ucc_container_of(reg, ucc_tl_dpu_rcache_region_t, reg);
@@ -224,7 +225,10 @@ static ucc_status_t ucc_tl_dpu_init_rkeys(ucc_tl_dpu_task_t *task)
                 src_buf, src_len, &task->dpu_task_list[rail].src_reg);
         status |= ucc_tl_dpu_register_buf(&ctx->dpu_ctx_list[rail],
                 dst_buf, dst_len, &task->dpu_task_list[rail].dst_reg);
+        task->dpu_task_list[rail].src_reg->offset = src_buf - task->dpu_task_list[rail].src_reg->address;
+        task->dpu_task_list[rail].dst_reg->offset = dst_buf - task->dpu_task_list[rail].dst_reg->address;
     }
+
     return status;
 }
 
@@ -256,6 +260,7 @@ static void ucc_tl_dpu_init_put(ucc_tl_dpu_context_t *ctx,
     put_sync->src_rkey.rkey_buf_len = dpu_task->src_reg->rkey_buf_size;
     put_sync->src_rkey.buf_addr     = dpu_task->src_reg->address;
     put_sync->src_rkey.buf_length   = dpu_task->src_reg->length;
+    put_sync->src_rkey.buf_offset   = dpu_task->src_reg->offset;
 
     memcpy(put_sync->dst_rkey.rkey_buf, dpu_task->dst_reg->rkey_buf,
             dpu_task->dst_reg->rkey_buf_size);
@@ -263,6 +268,7 @@ static void ucc_tl_dpu_init_put(ucc_tl_dpu_context_t *ctx,
     put_sync->dst_rkey.rkey_buf_len = dpu_task->dst_reg->rkey_buf_size;
     put_sync->dst_rkey.buf_addr     = dpu_task->dst_reg->address;
     put_sync->dst_rkey.buf_length   = dpu_task->dst_reg->length;
+    put_sync->dst_rkey.buf_offset   = dpu_task->dst_reg->offset;
 }
 
 static ucc_status_t ucc_tl_dpu_issue_send( ucc_tl_dpu_task_t *task,

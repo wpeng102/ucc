@@ -61,6 +61,7 @@ typedef struct host_rkey_t {
     size_t  rkey_buf_len;
     void   *buf_addr;
     size_t  buf_len;
+    size_t  buf_offset;
     ucp_mem_h memh;
 } host_rkey_t;
 
