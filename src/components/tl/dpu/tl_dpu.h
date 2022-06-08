@@ -93,8 +93,8 @@ UCC_CLASS_DECLARE(ucc_tl_dpu_context_t, const ucc_base_context_params_t *,
 typedef struct ucc_tl_dpu_put_rkey_t {
     char    rkey_buf[MAX_RKEY_LEN];
     size_t  rkey_buf_len;
-    void   *buf_addr;
-    size_t  buf_length;
+    void   *reg_addr;
+    size_t  reg_len;
     size_t  buf_offset;
     ucp_mem_h memh;
 } ucc_tl_dpu_put_rkey_t;
@@ -123,9 +123,9 @@ typedef struct ucc_tl_dpu_put_sync_t {
 
 typedef struct ucc_tl_dpu_reg_t {
     ucp_mem_h memh;
-    void     *address;
-    size_t    length;
-    size_t    offset;
+    void     *reg_addr;
+    size_t    reg_len;
+    size_t    buf_offset;
     void     *rkey_buf;
     size_t    rkey_buf_size;
 } ucc_tl_dpu_reg_t;

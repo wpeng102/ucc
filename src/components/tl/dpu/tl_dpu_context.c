@@ -59,8 +59,8 @@ ucc_tl_dpu_rcache_mem_reg_cb(void *context, ucc_rcache_t *rcache,
                  ret, address, length);
         return UCS_ERR_INVALID_PARAM;
     } else {
-        tl_warn(ctx->super.super.lib, "dpu_coll_reg_mr_cb region:%p addr:%p len:%zd",
-                &region->reg, region->reg.address, region->reg.length);
+        tl_debug(ctx->super.super.lib, "dpu_coll_reg_mr_cb region:%p addr:%p len:%zd",
+                &region->reg, region->reg.reg_addr, region->reg.reg_len);
         return UCS_OK;
     }
 }
@@ -78,8 +78,8 @@ static void ucc_tl_dpu_rcache_mem_dereg_cb(void *context, ucc_rcache_t *rcache,
     if (ret != UCS_OK) {
         tl_error(ctx->super.super.lib, "dpu_coll_dereg_mr failed(%d)", ret);
     } else {
-        tl_warn(ctx->super.super.lib, "dpu_coll_dereg_mr_cb region:%p addr:%p len:%zd",
-                &region->reg, region->reg.address, region->reg.length);
+        tl_debug(ctx->super.super.lib, "dpu_coll_dereg_mr_cb region:%p addr:%p len:%zd",
+                &region->reg, region->reg.reg_addr, region->reg.reg_len);
     }
 }
 
@@ -91,7 +91,7 @@ ucc_tl_dpu_rcache_dump_region_cb(void *context, ucs_rcache_t *rcache,
     ucc_tl_dpu_rcache_region_t *region = ucc_derived_of(rregion,
                                            ucc_tl_dpu_rcache_region_t);
 
-    snprintf(buf, max, "addr %p len %zu", region->reg.address, region->reg.length);
+    snprintf(buf, max, "addr %p len %zu", region->reg.reg_addr, region->reg.reg_len);
 }
 
 static ucc_rcache_ops_t ucc_tl_dpu_rcache_ops = {

@@ -59,8 +59,8 @@ do {                                                                \
 typedef struct host_rkey_t {
     char    rkey_buf[MAX_RKEY_LEN];
     size_t  rkey_buf_len;
-    void   *buf_addr;
-    size_t  buf_len;
+    void   *reg_addr;
+    size_t  reg_len;
     size_t  buf_offset;
     ucp_mem_h memh;
 } host_rkey_t;

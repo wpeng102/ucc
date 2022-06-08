@@ -850,7 +850,7 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
     }
 
     size_t data_size = count * dt_size;
-    void *src_addr = hc->host_src_rkeys[ep_src_rank].desc.buf_addr + get_offset;
+    void *src_addr = hc->host_src_rkeys[ep_src_rank].desc.reg_addr + get_offset;
     void *dst_addr = getbuf->buf;
 
     DPU_LOG("Issue Get from %d offset %lu src %p dst %p count %lu bytes %lu host_team_size: %d \n",
@@ -882,7 +882,7 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_stage_t *s
 
     size_t data_size = count * dt_size;
     void *src_addr = accbuf->buf;
-    void *dst_addr = hc->host_dst_rkeys[ep_dst_rank].desc.buf_addr + put_offset;
+    void *dst_addr = hc->host_dst_rkeys[ep_dst_rank].desc.reg_addr + put_offset;
 
     DPU_LOG("Issue Put to %d offset %lu src %p dst %p count %lu bytes %lu host_team_size: %d\n",
             dst_rank, put_offset, src_addr, dst_addr, count, data_size, host_team_size);

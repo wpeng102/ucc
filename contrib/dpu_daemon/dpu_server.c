@@ -156,9 +156,9 @@ static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_syn
 
         ucs_status_ptr_t ucp_req = NULL;
         size_t nbytes    = my_count * dt_size;
-        void * src_addr  = hc->host_src_rkeys[src_rank].desc.buf_addr   +
+        void * src_addr  = hc->host_src_rkeys[src_rank].desc.reg_addr   +
                            hc->host_src_rkeys[src_rank].desc.buf_offset + src_offset;
-        void * dst_addr  = lsync->dst_rkey.buf_addr + lsync->dst_rkey.buf_offset + dst_offset;
+        void * dst_addr  = lsync->dst_rkey.reg_addr + lsync->dst_rkey.buf_offset + dst_offset;
 
         ucp_request_param_t get_param = {
             .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
@@ -222,9 +222,9 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
 
         ucs_status_ptr_t ucp_req = NULL;
         size_t nbytes    = src_count * sdt_size;
-        void * src_addr  = hc->host_src_rkeys[src_rank].desc.buf_addr   +
+        void * src_addr  = hc->host_src_rkeys[src_rank].desc.reg_addr   +
                            hc->host_src_rkeys[src_rank].desc.buf_offset + src_offset;
-        void * dst_addr  = lsync->dst_rkey.buf_addr + lsync->dst_rkey.buf_offset + dst_offset;
+        void * dst_addr  = lsync->dst_rkey.reg_addr + lsync->dst_rkey.buf_offset + dst_offset;
 
         ucp_request_param_t get_param = {
             .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
@@ -259,7 +259,7 @@ static ucs_status_t dpu_import_host_rkey(ucp_context_h ucp_context,
     size_t               alias_rkey_buf_len;
 
     DPU_LOG("host rkey %p addr %p len %zu rkey len %zu\n",
-            host_rkey, host_rkey->buf_addr, host_rkey->buf_len, host_rkey->rkey_buf_len);
+            host_rkey, host_rkey->reg_addr, host_rkey->reg_len, host_rkey->rkey_buf_len);
 
     status = ucp_worker_rkey_unpack(ucp_worker, host_rkey->rkey_buf, &h_rkey);
     if (status != UCS_OK) {
@@ -271,8 +271,8 @@ static ucs_status_t dpu_import_host_rkey(ucp_context_h ucp_context,
     map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
                             UCP_MEM_MAP_PARAM_FIELD_LENGTH |
                             UCP_MEM_MAP_PARAM_FIELD_RKEY;
-    map_params.address = host_rkey->buf_addr;
-    map_params.length  = host_rkey->buf_len;
+    map_params.address = host_rkey->reg_addr;
+    map_params.length  = host_rkey->reg_len;
     map_params.rkey    = h_rkey;
 
     status = ucp_mem_map(ucp_context, &map_params, &alias_rkey->memh);
@@ -288,14 +288,14 @@ static ucs_status_t dpu_import_host_rkey(ucp_context_h ucp_context,
         return status;
     }
 
-    alias_rkey->buf_addr     = host_rkey->buf_addr;
-    alias_rkey->buf_len      = host_rkey->buf_len;
+    alias_rkey->reg_addr     = host_rkey->reg_addr;
+    alias_rkey->reg_len      = host_rkey->reg_len;
     alias_rkey->buf_offset   = host_rkey->buf_offset;
     alias_rkey->rkey_buf_len = alias_rkey_buf_len;
     memcpy(&alias_rkey->rkey_buf, alias_rkey_buf, alias_rkey_buf_len);
 
     DPU_LOG("alias rkey %p addr %p len %zu rkey len %zu\n",
-            alias_rkey, alias_rkey->buf_addr, alias_rkey->buf_len, alias_rkey->rkey_buf_len);
+            alias_rkey, alias_rkey->reg_addr, alias_rkey->reg_len, alias_rkey->rkey_buf_len);
 
     ucp_rkey_buffer_release(alias_rkey_buf);
     ucp_rkey_destroy(h_rkey);
@@ -318,8 +318,8 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     void *src_buf = lsync;
     void *dst_buf = hc->world_lsyncs;
 
-    assert(lsync->src_rkey.rkey_buf && lsync->src_rkey.buf_addr && lsync->src_rkey.rkey_buf_len > 0 && lsync->src_rkey.buf_len > 0);
-    assert(lsync->dst_rkey.rkey_buf && lsync->dst_rkey.buf_addr && lsync->dst_rkey.rkey_buf_len > 0 && lsync->dst_rkey.buf_len > 0);
+    assert(lsync->src_rkey.rkey_buf && lsync->src_rkey.reg_addr && lsync->src_rkey.rkey_buf_len > 0 && lsync->src_rkey.reg_len > 0);
+    assert(lsync->dst_rkey.rkey_buf && lsync->dst_rkey.reg_addr && lsync->dst_rkey.rkey_buf_len > 0 && lsync->dst_rkey.reg_len > 0);
 
     /* Create aliased rkey for host src and dst buffers */
     dpu_import_host_rkey(hc->ucp_ctx, hc->ucp_worker, &lsync->src_rkey, &lsync->src_rkey);
@@ -365,7 +365,7 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
         assert(UCS_OK == status);
         
         CTX_LOG("Rank %d with EP Rank %d team_id %d src buf %p dst buf %p\n", 
-                i, ep_rank, lsync->team_id, hc->host_src_rkeys[ep_rank].desc.buf_addr, hc->host_dst_rkeys[ep_rank].desc.buf_addr);
+                i, ep_rank, lsync->team_id, hc->host_src_rkeys[ep_rank].desc.reg_addr, hc->host_dst_rkeys[ep_rank].desc.reg_addr);
     }
 
     hc->rail = lsync->rail;
