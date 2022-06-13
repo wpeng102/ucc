@@ -23,6 +23,8 @@
 #include "server_ucc.h"
 #include <ucc/api/ucc.h>
 #include <ucp/api/ucp.h>
+#include "utils/ucc_rcache.h"
+
 
 #define MAX_NUM_RANKS       128
 #define MAX_RKEY_LEN        1024
@@ -69,6 +71,11 @@ typedef struct alias_rkey_t {
     ucp_rkey_h  rkey;
     host_rkey_t desc;
 } alias_rkey_t;
+
+typedef struct dpu_rcache_region {
+    ucc_rcache_region_t  super;
+    host_rkey_t          reg;
+} dpu_rcache_region_t;
 
 typedef struct buf_info_v_t {
     ucc_count_t counts[MAX_NUM_RANKS];
@@ -203,6 +210,7 @@ typedef struct dpu_hc_t {
     ucp_ep_h *dpu_eps;
     alias_rkey_t *host_src_rkeys;
     alias_rkey_t *host_dst_rkeys;
+    ucc_rcache_t *rcache;
 
     /* Multi-rail support */
     int rail;
@@ -265,5 +273,6 @@ ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request
 ucc_rank_t dpu_get_world_rank(dpu_hc_t *hc,  int dpu_rank, int team_id, thread_ctx_t *ctx);
 ucc_rank_t dpu_get_host_ep_rank(dpu_hc_t *hc,  int host_rank, int team_id, thread_ctx_t *ctx);
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);
+ucs_status_t dpu_reg_host_mr(ucp_context_h ucp_context, ucp_worker_h ucp_worker, host_rkey_t *host_rkey, host_rkey_t *alias_rkey);
     
 #endif

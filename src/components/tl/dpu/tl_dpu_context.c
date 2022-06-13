@@ -459,7 +459,7 @@ UCC_CLASS_INIT_FUNC(ucc_tl_dpu_context_t,
 
         if (self->cfg.use_rcache) {
             ucc_rcache_params_t rcache_params = {
-                .alignment          = 64,
+                .alignment          = getpagesize(),
                 .ucm_event_priority = 1000,
                 .max_regions        = ULONG_MAX,
                 .max_size           = SIZE_MAX,

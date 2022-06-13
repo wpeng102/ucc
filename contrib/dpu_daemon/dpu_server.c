@@ -246,60 +246,37 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
     return UCC_OK;
 }
 
-/* Ensure host_rkey and alias_rkey can point to the same struct */
-static ucs_status_t dpu_import_host_rkey(ucp_context_h ucp_context,
-                                         ucp_worker_h  ucp_worker,
-                                         host_rkey_t *host_rkey,
-                                         host_rkey_t *alias_rkey)
+static int dpu_import_host_rkey(dpu_hc_t *hc, host_rkey_t *host_rkey, host_rkey_t *alias_rkey)
 {
-    ucp_mem_map_params_t map_params = {0};
-    ucs_status_t         status;
-    ucp_rkey_h           h_rkey;
-    void                *alias_rkey_buf;
-    size_t               alias_rkey_buf_len;
+    ucc_rcache_region_t     *rregion;
+    dpu_rcache_region_t     *region;
+    ucc_status_t             status;
 
-    DPU_LOG("host rkey %p addr %p len %zu rkey len %zu\n",
-            host_rkey, host_rkey->reg_addr, host_rkey->reg_len, host_rkey->rkey_buf_len);
-
-    status = ucp_worker_rkey_unpack(ucp_worker, host_rkey->rkey_buf, &h_rkey);
-    if (status != UCS_OK) {
-        fprintf(stderr, "ucp_worker_rkey_unpack failed: %s",
-                ucs_status_string(status));
-        return status;
+    if (hc->rcache) {
+        status = ucs_rcache_get(hc->rcache, host_rkey->reg_addr, host_rkey->reg_len,
+                                PROT_READ | PROT_WRITE, host_rkey, &rregion);
+        if (status != UCC_OK) {
+            DPU_LOG("ucc_rcache_get failed");
+            return UCC_ERR_INVALID_PARAM;
+        }
+        region = ucs_derived_of(rregion, dpu_rcache_region_t);
+        memcpy(alias_rkey, &region->reg, sizeof(host_rkey_t));
+        ucs_rcache_region_put(hc->rcache, &region->super);
+    } else {
+        status = dpu_reg_host_mr(hc->ucp_ctx, hc->ucp_worker, host_rkey, alias_rkey);
+        assert(status == UCS_OK);
     }
 
-    map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
-                            UCP_MEM_MAP_PARAM_FIELD_LENGTH |
-                            UCP_MEM_MAP_PARAM_FIELD_RKEY;
-    map_params.address = host_rkey->reg_addr;
-    map_params.length  = host_rkey->reg_len;
-    map_params.rkey    = h_rkey;
+    return status;
+}
 
-    status = ucp_mem_map(ucp_context, &map_params, &alias_rkey->memh);
-    if (status != UCS_OK) {
-        fprintf(stderr, "ucp_mem_map failed: %s", ucs_status_string(status));
-        return status;
+static void dpu_free_alias_rkey(dpu_hc_t *hc, host_rkey_t *reg)
+{
+    dpu_rcache_region_t *region;
+    if (hc->rcache) {
+        region = ucs_container_of(reg, dpu_rcache_region_t, reg);
+        ucs_rcache_region_put(hc->rcache, &region->super);
     }
-
-    /* Pack alias rkey */
-    status = ucp_rkey_pack(ucp_context, alias_rkey->memh, &alias_rkey_buf, &alias_rkey_buf_len);
-    if (status != UCS_OK) {
-        fprintf(stderr, "ucp_rkey_pack failed: %s", ucs_status_string(status));
-        return status;
-    }
-
-    alias_rkey->reg_addr     = host_rkey->reg_addr;
-    alias_rkey->reg_len      = host_rkey->reg_len;
-    alias_rkey->buf_offset   = host_rkey->buf_offset;
-    alias_rkey->rkey_buf_len = alias_rkey_buf_len;
-    memcpy(&alias_rkey->rkey_buf, alias_rkey_buf, alias_rkey_buf_len);
-
-    DPU_LOG("alias rkey %p addr %p len %zu rkey len %zu\n",
-            alias_rkey, alias_rkey->reg_addr, alias_rkey->reg_len, alias_rkey->rkey_buf_len);
-
-    ucp_rkey_buffer_release(alias_rkey_buf);
-    ucp_rkey_destroy(h_rkey);
-    return UCS_OK;
 }
 
 static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
@@ -322,8 +299,8 @@ static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync
     assert(lsync->dst_rkey.rkey_buf && lsync->dst_rkey.reg_addr && lsync->dst_rkey.rkey_buf_len > 0 && lsync->dst_rkey.reg_len > 0);
 
     /* Create aliased rkey for host src and dst buffers */
-    dpu_import_host_rkey(hc->ucp_ctx, hc->ucp_worker, &lsync->src_rkey, &lsync->src_rkey);
-    dpu_import_host_rkey(hc->ucp_ctx, hc->ucp_worker, &lsync->dst_rkey, &lsync->dst_rkey);
+    dpu_import_host_rkey(hc, &lsync->src_rkey, &lsync->src_rkey);
+    dpu_import_host_rkey(hc, &lsync->dst_rkey, &lsync->dst_rkey);
 
     ucc_coll_args_t coll = {
         .coll_type = UCC_COLL_TYPE_ALLGATHER,
@@ -407,6 +384,9 @@ static void dpu_coll_free_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
         if (ctx->hc->host_dst_rkeys[i].rkey != NULL)
             ucp_rkey_destroy(ctx->hc->host_dst_rkeys[i].rkey);
     }
+
+    // dpu_free_alias_rkey(hc, &lsync->src_rkey);
+    // dpu_free_alias_rkey(hc, &lsync->dst_rkey);
 }
 
 void dpu_waitfor_comm_thread(thread_ctx_t *ctx, thread_sync_t *sync)

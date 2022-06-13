@@ -169,6 +169,155 @@ static ucs_status_t _dpu_worker_flush(dpu_hc_t *hc)
     return _dpu_request_wait(hc->ucp_worker, request);
 }
 
+ucs_status_t dpu_reg_host_mr(ucp_context_h ucp_context,
+                             ucp_worker_h  ucp_worker,
+                             host_rkey_t  *host_rkey,
+                             host_rkey_t  *alias_rkey)
+{
+    ucp_mem_map_params_t map_params = {0};
+    ucs_status_t         status;
+    ucp_rkey_h           h_rkey;
+    void                *alias_rkey_buf;
+    size_t               alias_rkey_buf_len;
+
+    DPU_LOG("host rkey %p addr %p len %zu rkey len %zu\n",
+            host_rkey, host_rkey->reg_addr, host_rkey->reg_len, host_rkey->rkey_buf_len);
+
+    status = ucp_worker_rkey_unpack(ucp_worker, host_rkey->rkey_buf, &h_rkey);
+    if (status != UCS_OK) {
+        fprintf(stderr, "ucp_worker_rkey_unpack failed: %s",
+                ucs_status_string(status));
+        return status;
+    }
+
+    map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+                            UCP_MEM_MAP_PARAM_FIELD_LENGTH |
+                            UCP_MEM_MAP_PARAM_FIELD_RKEY;
+    map_params.address = host_rkey->reg_addr;
+    map_params.length  = host_rkey->reg_len;
+    map_params.rkey    = h_rkey;
+
+    status = ucp_mem_map(ucp_context, &map_params, &alias_rkey->memh);
+    if (status != UCS_OK) {
+        fprintf(stderr, "ucp_mem_map failed: %s", ucs_status_string(status));
+        return status;
+    }
+
+    /* Pack alias rkey */
+    status = ucp_rkey_pack(ucp_context, alias_rkey->memh, &alias_rkey_buf, &alias_rkey_buf_len);
+    if (status != UCS_OK) {
+        fprintf(stderr, "ucp_rkey_pack failed: %s", ucs_status_string(status));
+        return status;
+    }
+
+    alias_rkey->reg_addr     = host_rkey->reg_addr;
+    alias_rkey->reg_len      = host_rkey->reg_len;
+    alias_rkey->buf_offset   = host_rkey->buf_offset;
+    alias_rkey->rkey_buf_len = alias_rkey_buf_len;
+    memcpy(&alias_rkey->rkey_buf, alias_rkey_buf, alias_rkey_buf_len);
+
+    DPU_LOG("alias rkey %p addr %p len %zu rkey len %zu\n",
+            alias_rkey, alias_rkey->reg_addr, alias_rkey->reg_len, alias_rkey->rkey_buf_len);
+
+    ucp_rkey_buffer_release(alias_rkey_buf);
+    ucp_rkey_destroy(h_rkey);
+    return UCS_OK;
+}
+
+static ucs_status_t
+_dpu_rcache_mem_reg_cb(void *context, ucc_rcache_t *rcache,
+                      void *arg, ucc_rcache_region_t *rregion,
+                      uint16_t flags)
+{
+    dpu_hc_t *hc = (dpu_hc_t*) context;
+    host_rkey_t *host_rkey = (host_rkey_t*) arg;
+    dpu_rcache_region_t *region;
+    void                *address;
+    size_t               length;
+    ucs_status_t         ret;
+
+    address = (void*)rregion->super.start;
+    length  = (size_t)(rregion->super.end - rregion->super.start);
+    region  = ucs_derived_of(rregion, dpu_rcache_region_t);
+
+    ret = dpu_reg_host_mr(hc->ucp_ctx, hc->ucp_worker, host_rkey, &region->reg);
+
+    if (ret != UCS_OK) {
+        fprintf(stderr, "dpu_rcache_mem_reg_cb failed(%d) addr:%p len:%zd",
+                 ret, address, length);
+        return UCS_ERR_INVALID_PARAM;
+    } else {
+        DPU_LOG("dpu_rcache_mem_reg_cb region:%p addr:%p len:%zd\n",
+                &region->reg, region->reg.reg_addr, region->reg.reg_len);
+        return UCS_OK;
+    }
+    return ret;
+}
+
+static void
+_dpu_rcache_mem_dereg_cb(void *context, ucc_rcache_t *rcache,
+                        ucc_rcache_region_t *rregion)
+{
+
+}
+
+static void
+_dpu_rcache_dump_region_cb(void *context, ucs_rcache_t *rcache,
+                          ucs_rcache_region_t *rregion, char *buf,
+                          size_t max)
+{
+    dpu_rcache_region_t *region = ucs_derived_of(rregion, dpu_rcache_region_t);
+    snprintf(buf, max, "addr %p len %zu", region->reg.reg_addr, region->reg.reg_len);
+}
+
+
+static ucc_rcache_ops_t dpu_rcache_ops = {
+    .mem_reg     = _dpu_rcache_mem_reg_cb,
+    .mem_dereg   = _dpu_rcache_mem_dereg_cb,
+    .dump_region = _dpu_rcache_dump_region_cb,
+};
+
+static int _dpu_ucc_rcache_init(dpu_hc_t *hc)
+{
+    char *s = getenv("UCC_TL_DPU_USE_RCACHE");
+    if (s && !strcmp(s, "no")) {
+        DPU_LOG("Disabled DPU import rcache\n");
+        hc->rcache = NULL;
+        return UCC_OK;
+    }
+
+    ucc_rcache_params_t rcache_params = {
+        .alignment          = getpagesize(),
+        .ucm_event_priority = 1000,
+        .max_regions        = SIZE_MAX,
+        .max_size           = SIZE_MAX,
+        .region_struct_size = sizeof(dpu_rcache_region_t),
+        .max_alignment      = getpagesize(),
+        .ucm_events         = UCM_EVENT_VM_UNMAPPED | UCM_EVENT_MEM_TYPE_FREE,
+        .context            = hc,
+        .ops                = &dpu_rcache_ops,
+        .flags              = 0,
+    };
+
+    ucc_status_t ucc_status = ucs_rcache_create(&rcache_params, "DPU", NULL, &hc->rcache);
+    if (ucc_status != UCC_OK) {
+        fprintf(stderr, "failed to create DPU import rcache (%s)\n",
+                    ucc_status_string(ucc_status));
+        ucc_status = UCC_ERR_NO_RESOURCE;
+    } else {
+        DPU_LOG("Created DPU import rcache\n");
+    }
+
+    return UCC_OK;
+}
+
+static void _dpu_ucc_rcache_fini(dpu_hc_t *hc)
+{
+    if (hc->rcache) {
+        ucs_rcache_destroy(hc->rcache);
+    }
+}
+
 static int _dpu_ucx_init(dpu_hc_t *hc)
 {
     ucp_params_t ucp_params;
@@ -617,6 +766,11 @@ int dpu_hc_accept_job(dpu_hc_t *hc)
     ret = _dpu_ucx_init(hc);
     if (ret) {
         goto err_ucx;
+    }
+
+    ret = _dpu_ucc_rcache_init(hc);
+    if (ret) {
+        goto err;
     }
 
     /* In the call to accept(), the server is put to sleep and when for an incoming
@@ -1116,6 +1270,7 @@ int dpu_hc_reset_job(dpu_hc_t *hc)
     _dpu_hc_buffer_free(hc, &hc->mem_segs.sync);
     _dpu_close_dpu_eps(hc);
     _dpu_close_host_eps(hc);
+    _dpu_ucc_rcache_fini(hc);
     _dpu_ucx_fini(hc);
     printf("# Completed Job Id %d\n", hc->job_id);
     return UCC_OK;
