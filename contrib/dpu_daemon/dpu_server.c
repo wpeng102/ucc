@@ -589,6 +589,7 @@ void *dpu_comm_thread(void *arg)
             if (create_team == 1) {
 
                 dpu_create_comm_team(ctx, lsync);
+                dpu_coll_do_barrier(ctx, lsync);
                 dpu_signal_comp_thread(ctx, thread_main_sync);
                 dpu_waitfor_comp_thread(ctx, thread_main_sync);
                 continue;
@@ -717,6 +718,7 @@ void *dpu_worker_thread(void *arg)
             if (create_team == 1) {
 
                 dpu_create_comm_team(ctx, lsync);
+                dpu_coll_do_barrier(ctx, lsync);
                 dpu_signal_comm_thread(ctx, thread_main_sync);
                 continue;
 
