@@ -185,7 +185,10 @@ typedef struct ucc_tl_dpu_rcache_region {
 } ucc_tl_dpu_rcache_region_t;
 
 #define UCC_TL_DPU_SUPPORTED_COLLS \
-    (UCC_COLL_TYPE_ALLREDUCE | UCC_COLL_TYPE_ALLTOALL | UCC_COLL_TYPE_ALLTOALLV)
+    (UCC_COLL_TYPE_ALLREDUCE | \
+     UCC_COLL_TYPE_ALLTOALL  | \
+     UCC_COLL_TYPE_ALLTOALLV | \
+     UCC_COLL_TYPE_BCAST )
 
 #define UCC_TL_DPU_TEAM_LIB(_team)                                          \
     (ucc_derived_of((_team)->super.super.context->lib, ucc_tl_dpu_lib_t))

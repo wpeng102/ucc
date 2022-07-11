@@ -246,6 +246,54 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
     return UCC_OK;
 }
 
+static ucc_status_t dpu_coll_do_blocking_bcast(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
+{
+    /* Only do in comm thread */
+    assert(ctx->idx == THREAD_IDX_COMM);
+
+    ucs_status_t status;
+    uint32_t team_size;
+    uint64_t team_rank;
+    dpu_hc_t *hc = ctx->hc;
+    ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+    UCC_CHECK(ucc_team_get_size(team, &team_size));
+    UCC_CHECK(ucc_team_get_my_ep(team, &team_rank));
+
+    ucc_rank_t root      = lsync->coll_args.root;
+    size_t count         = lsync->coll_args.src.info.count;
+    ucc_datatype_t dtype = lsync->coll_args.src.info.datatype;
+    size_t dt_size       = dpu_ucc_dt_size(dtype);
+
+    CTX_LOG("Doing bcast on team id %d team size %ld count %lu\n", lsync->team_id, team_size, count);
+    if (team_rank == root) {
+        return UCC_OK;
+    }
+
+    ucs_status_ptr_t ucp_req = NULL;
+    size_t nbytes    = count * dt_size;
+    void * src_addr  = hc->host_src_rkeys[root].desc.reg_addr +
+                       hc->host_src_rkeys[root].desc.buf_offset;
+    void * dst_addr  = lsync->src_rkey.reg_addr + lsync->src_rkey.buf_offset;
+
+    ucp_request_param_t get_param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
+        .memh = lsync->src_rkey.memh,
+    };
+
+    DPU_LOG("Issue Get from %d src %p dst %p count %lu bytes %lu\n",
+            root, src_addr, dst_addr, count, nbytes);
+    ucp_worker_fence(hc->ucp_worker);
+    ucp_req = ucp_get_nbx(
+        hc->dpu_eps[root], dst_addr, nbytes, (uint64_t)src_addr,
+        hc->host_src_rkeys[root].rkey, &get_param);
+    status = _dpu_request_wait(hc->ucp_worker, ucp_req);
+    if (status != UCS_OK) {
+        return UCC_ERR_NO_RESOURCE;
+    }
+
+    return UCC_OK;
+}
+
 static int dpu_import_host_rkey(dpu_hc_t *hc, host_rkey_t *host_rkey, host_rkey_t *alias_rkey)
 {
     ucc_rcache_region_t     *rregion;
@@ -672,6 +720,22 @@ void *dpu_comm_thread(void *arg)
             dpu_coll_collect_host_rkeys(ctx, lsync);
             
             dpu_coll_do_blocking_alltoallv(ctx, lsync);
+
+            CTX_LOG("Waiting for all ranks to complete coll id: %u, type: %d\n",
+                    coll_id, coll_type);
+            dpu_coll_do_barrier(ctx, lsync);
+
+            dpu_mark_coll_done(ctx, lsync);
+            CTX_LOG("End coll id: %u, type: %d, count total: %lu, count serviced: %zu\n",
+                    coll_id, coll_type, count_total, (size_t)ctx->coll_sync->count_serviced);
+
+            dpu_coll_free_host_rkeys(ctx, lsync);
+        }
+
+        else if (coll_type == UCC_COLL_TYPE_BCAST) {
+            dpu_coll_collect_host_rkeys(ctx, lsync);
+            
+            dpu_coll_do_blocking_bcast(ctx, lsync);
 
             CTX_LOG("Waiting for all ranks to complete coll id: %u, type: %d\n",
                     coll_id, coll_type);
