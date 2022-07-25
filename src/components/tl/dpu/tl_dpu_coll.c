@@ -74,15 +74,14 @@ ucs_status_t dpu_coll_reg_mr(ucp_context_h ucp_ctx,
 {
     int status;
     ucp_mem_attr_t mem_attr;
+    ucp_memh_pack_params_t memh_pack_params;
     ucp_mem_map_params_t mem_params = {
         .field_mask = UCP_MEM_MAP_PARAM_FIELD_FLAGS   |
                       UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
-                      UCP_MEM_MAP_PARAM_FIELD_LENGTH  |
-                      UCP_MEM_MAP_PARAM_FIELD_PEER_ID ,
+                      UCP_MEM_MAP_PARAM_FIELD_LENGTH,
         .flags      = UCP_MEM_MAP_SHARED,
         .address    = addr,
         .length     = size,
-        .peer_id    = 0, /* TODO: gvmi id */
     };
 
     status = ucp_mem_map(ucp_ctx, &mem_params, &reg->memh);
@@ -102,13 +101,16 @@ ucs_status_t dpu_coll_reg_mr(ucp_context_h ucp_ctx,
     assert(mem_attr.length >= size);
     assert(mem_attr.address <= addr);
 
-    reg->reg_addr = mem_attr.address;
-    reg->reg_len  = mem_attr.length;
-    reg->buf_offset   = addr - mem_attr.address;
+    reg->reg_addr   = mem_attr.address;
+    reg->reg_len    = mem_attr.length;
+    reg->buf_offset = addr - mem_attr.address;
 
-    status = ucp_rkey_pack(ucp_ctx, reg->memh, &reg->rkey_buf, &reg->rkey_buf_size);
+    memh_pack_params.field_mask = UCP_MEMH_PACK_PARAM_FIELD_FLAGS;
+    memh_pack_params.flags      = UCP_MEMH_PACK_FLAG_SHARED;
+    status = ucp_memh_pack(ucp_ctx, reg->memh, &memh_pack_params,
+                           &reg->rkey_buf, &reg->rkey_buf_size);
     if (status != UCS_OK) {
-        fprintf(stderr, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status));
+        fprintf(stderr, "failed to ucp_memh_pack (%s)\n", ucs_status_string(status));
         goto err_map;
     }
     assert(reg->rkey_buf_size < MAX_RKEY_LEN);
@@ -124,12 +126,12 @@ ucs_status_t dpu_coll_dereg_mr(ucp_context_h ucp_ctx,
                        ucc_tl_dpu_reg_t *reg)
 {
     ucs_status_t status = UCS_OK;
+    ucp_memh_buffer_release(reg->rkey_buf);
     status = ucp_mem_unmap(ucp_ctx, reg->memh);
     if (status != UCS_OK) {
         fprintf(stderr, "failed to ucp_mem_unmap (%s)\n", ucs_status_string(status));
         goto out;
     }
-    ucp_rkey_buffer_release(reg->rkey_buf);
     reg->reg_addr       = NULL;
     reg->reg_len        = 0;
     reg->buf_offset         = 0;
@@ -151,7 +153,7 @@ ucs_status_t ucc_tl_dpu_register_buf(ucc_tl_dpu_connect_t *ctx,
     tl_warn(dpu_ctx->super.super.lib, "ucc_tl_dpu_register_buf region:%p addr:%p len:%zd", *reg, addr, length);
 
     if (ctx->rcache) {
-        status = ucc_rcache_get(ctx->rcache, addr, length, &rregion);
+        status = ucc_rcache_get(ctx->rcache, addr, length, NULL, &rregion);
         if (status != UCC_OK) {
             tl_error(dpu_ctx->super.super.lib, "ucc_rcache_get failed");
             return UCC_ERR_INVALID_PARAM;

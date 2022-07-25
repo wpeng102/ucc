@@ -273,6 +273,6 @@ ucs_status_t _dpu_request_wait(ucp_worker_h ucp_worker, ucs_status_ptr_t request
 ucc_rank_t dpu_get_world_rank(dpu_hc_t *hc,  int dpu_rank, int team_id, thread_ctx_t *ctx);
 ucc_rank_t dpu_get_host_ep_rank(dpu_hc_t *hc,  int host_rank, int team_id, thread_ctx_t *ctx);
 size_t dpu_ucc_dt_size(ucc_datatype_t dt);
-ucs_status_t dpu_reg_host_mr(ucp_context_h ucp_context, ucp_worker_h ucp_worker, host_rkey_t *host_rkey, host_rkey_t *alias_rkey);
+ucs_status_t dpu_reg_host_mr(ucp_context_h ucp_context, host_rkey_t *host_rkey, host_rkey_t *alias_rkey);
     
 #endif

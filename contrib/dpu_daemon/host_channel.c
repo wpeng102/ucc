@@ -170,32 +170,21 @@ static ucs_status_t _dpu_worker_flush(dpu_hc_t *hc)
 }
 
 ucs_status_t dpu_reg_host_mr(ucp_context_h ucp_context,
-                             ucp_worker_h  ucp_worker,
                              host_rkey_t  *host_rkey,
                              host_rkey_t  *alias_rkey)
 {
     ucp_mem_map_params_t map_params = {0};
     ucs_status_t         status;
-    ucp_rkey_h           h_rkey;
     void                *alias_rkey_buf;
     size_t               alias_rkey_buf_len;
 
     DPU_LOG("host rkey %p addr %p len %zu rkey len %zu\n",
             host_rkey, host_rkey->reg_addr, host_rkey->reg_len, host_rkey->rkey_buf_len);
 
-    status = ucp_worker_rkey_unpack(ucp_worker, host_rkey->rkey_buf, &h_rkey);
-    if (status != UCS_OK) {
-        fprintf(stderr, "ucp_worker_rkey_unpack failed: %s",
-                ucs_status_string(status));
-        return status;
-    }
-
-    map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
-                            UCP_MEM_MAP_PARAM_FIELD_LENGTH |
-                            UCP_MEM_MAP_PARAM_FIELD_RKEY;
-    map_params.address = host_rkey->reg_addr;
-    map_params.length  = host_rkey->reg_len;
-    map_params.rkey    = h_rkey;
+    map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_FLAGS |
+                            UCP_MEM_MAP_PARAM_FIELD_SHARED_MKEY_BUFFER;
+    map_params.flags      = UCP_MEM_MAP_SHARED;
+    map_params.shared_mkey_buffer = host_rkey->rkey_buf;
 
     status = ucp_mem_map(ucp_context, &map_params, &alias_rkey->memh);
     if (status != UCS_OK) {
@@ -220,7 +209,6 @@ ucs_status_t dpu_reg_host_mr(ucp_context_h ucp_context,
             alias_rkey, alias_rkey->reg_addr, alias_rkey->reg_len, alias_rkey->rkey_buf_len);
 
     ucp_rkey_buffer_release(alias_rkey_buf);
-    ucp_rkey_destroy(h_rkey);
     return UCS_OK;
 }
 
@@ -240,7 +228,7 @@ _dpu_rcache_mem_reg_cb(void *context, ucc_rcache_t *rcache,
     length  = (size_t)(rregion->super.end - rregion->super.start);
     region  = ucs_derived_of(rregion, dpu_rcache_region_t);
 
-    ret = dpu_reg_host_mr(hc->ucp_ctx, hc->ucp_worker, host_rkey, &region->reg);
+    ret = dpu_reg_host_mr(hc->ucp_ctx, host_rkey, &region->reg);
 
     if (ret != UCS_OK) {
         fprintf(stderr, "dpu_rcache_mem_reg_cb failed(%d) addr:%p len:%zd",

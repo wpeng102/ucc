@@ -311,7 +311,7 @@ static int dpu_import_host_rkey(dpu_hc_t *hc, host_rkey_t *host_rkey, host_rkey_
         memcpy(alias_rkey, &region->reg, sizeof(host_rkey_t));
         ucs_rcache_region_put(hc->rcache, &region->super);
     } else {
-        status = dpu_reg_host_mr(hc->ucp_ctx, hc->ucp_worker, host_rkey, alias_rkey);
+        status = dpu_reg_host_mr(hc->ucp_ctx, host_rkey, alias_rkey);
         assert(status == UCS_OK);
     }
 
