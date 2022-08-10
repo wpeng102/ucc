@@ -68,4 +68,7 @@ int dpu_ucc_free_team(dpu_ucc_global_t *g, dpu_ucc_comm_t *ctx);
 void dpu_ucc_finalize(dpu_ucc_global_t *g);
 void dpu_ucc_progress(dpu_ucc_comm_t *team);
 
+ucc_status_t ucc_team_get_size(ucc_team_h team, uint32_t *size);
+ucc_status_t ucc_team_get_my_ep(ucc_team_h team, uint64_t *ep);
+
 #endif
