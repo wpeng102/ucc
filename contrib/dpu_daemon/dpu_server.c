@@ -329,6 +329,7 @@ static ucc_status_t dpu_coll_do_sharp_allreduce(thread_ctx_t *ctx, dpu_put_sync_
         CTX_LOG("Calling sharp allreduce on team id %d team size %d count %lu\n",
                 lsync->team_id, team_size, count_step);
         ucc_coll_args_t coll = {
+            .op = lsync->coll_args.op,
             .coll_type = UCC_COLL_TYPE_ALLREDUCE,
             .src.info = {
                 .buffer   = tmp_addr,
@@ -708,8 +709,8 @@ void *dpu_comm_thread(void *arg)
 
         else if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
             // dpu_coll_collect_host_rkeys(ctx, lsync);
-            // ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
-            // assert(team != NULL);
+            ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+            assert(team != NULL);
             // UCC_CHECK(ucc_team_get_size(team, &dpu_team_size));
             // UCC_CHECK(ucc_team_get_my_ep(team, &dpu_team_rank));
  
@@ -722,19 +723,21 @@ void *dpu_comm_thread(void *arg)
             // }
 
             // dpu_signal_comp_thread(ctx, thread_main_sync);
-            // while (hc->pipeline.count_serviced < hc->pipeline.my_count) {
-            //     dpu_hc_progress_allreduce(ctx->hc, lsync, ctx);
-            // }
+
+            hc->pipeline.my_count  = lsync->count_total;
+            while (hc->pipeline.count_serviced < hc->pipeline.my_count) {
+                dpu_hc_progress_allreduce(ctx->hc, lsync, ctx);
+            }
             // dpu_hc_issue_hangup(ctx->hc, lsync, ctx);
 
-            dpu_coll_do_sharp_allreduce(ctx, lsync);
+            // dpu_coll_do_sharp_allreduce(ctx, lsync);
 
             // CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n",
             //         coll_id, coll_type);
             // dpu_waitfor_comp_thread(ctx, thread_main_sync);
 
-            CTX_LOG("Waiting for all ranks to complete coll id: %u, type: %d\n",
-                    coll_id, coll_type);
+            // CTX_LOG("Waiting for all ranks to complete coll id: %u, type: %d\n",
+                    // coll_id, coll_type);
             // dpu_coll_do_barrier(ctx, lsync);
 
             dpu_mark_coll_done(ctx, lsync);
