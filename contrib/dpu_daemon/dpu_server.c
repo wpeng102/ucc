@@ -856,8 +856,8 @@ void *dpu_worker_thread(void *arg)
             //               count, dtype, op, UCC_MEMORY_TYPE_HOST);
             ucc_mc_reduce_multi(accbuf->buf, getbuf->buf, accbuf->buf,
                           1, count, 0, dtype, op, UCC_MEMORY_TYPE_HOST);
-            CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
-                    count, ctx->hc->pipeline.count_reduced, ctx->hc->pipeline.my_count);
+            // CTX_LOG("Reduced %lu elements, serviced %lu out of %lu\n",
+                    // count, ctx->hc->pipeline.count_reduced, ctx->hc->pipeline.my_count);
         done:
             dpu_coll_do_barrier(ctx, lsync);
             dpu_signal_comm_thread(ctx, thread_sub_sync);

@@ -120,10 +120,12 @@ typedef enum dpu_ar_phase_t {
 typedef enum dpu_buf_state_t {
     FREE,
     READING,
+    READY,
     REDUCING,
     REDUCED,
     WRITING,
-    IDLE,
+    DONE,
+    UNUSED,
 } dpu_buf_state_t;
 
 typedef struct dpu_buf_t {
