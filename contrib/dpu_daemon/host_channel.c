@@ -428,7 +428,7 @@ int dpu_hc_connect_localhost_ep(dpu_hc_t *hc)
     status = ucp_ep_create(hc->ucp_worker, &ep_params, &hc->localhost_ep);
     if (status != UCS_OK) {
         fprintf(stderr, "failed to create endpoint on dpu to local host %d (%s)\n",
-                ucs_status_string(status));
+                status, ucs_status_string(status));
     }
 
     return status;

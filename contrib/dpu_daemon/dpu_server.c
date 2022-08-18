@@ -126,7 +126,7 @@ static void dpu_thread_set_affinity(thread_ctx_t *ctx)
     }
 
     /* FIXME */
-    // pthread_setaffinity_np(thread, sizeof(cpuset), &cpuset);
+    pthread_setaffinity_np(thread, sizeof(cpuset), &cpuset);
 }
 
 static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
@@ -278,6 +278,99 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
 
     return UCC_OK;
 }
+
+static ucc_status_t dpu_coll_do_sharp_allreduce(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
+{
+    /* Only do in comm thread */
+    assert(ctx->idx == THREAD_IDX_COMM);
+
+    ucc_coll_req_h request;
+    ucs_status_t status;
+    size_t team_rank, team_size;
+    dpu_hc_t *hc = ctx->hc;
+    ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+    UCC_CHECK(ucc_team_get_size(team, (uint32_t*)&team_size));
+    UCC_CHECK(ucc_team_get_my_ep(team, (uint64_t*)&team_rank));
+
+    size_t count_total   = lsync->count_total;
+    size_t my_count      = count_total;
+    ucc_datatype_t dtype = lsync->coll_args.src.info.datatype;
+    size_t dt_size       = dpu_ucc_dt_size(dtype);
+    ucc_reduction_op_t op = lsync->coll_args.op;
+
+    CTX_LOG("Doing sharp allreduce on team id %d team size %d count %lu\n", lsync->team_id, team_size, count_total);
+
+    size_t src_offset = 0;
+    size_t dst_offset = 0;
+    size_t count_done = 0;
+
+    while (count_done < my_count) {
+        ucs_status_ptr_t ucp_req = NULL;
+        size_t remaining_elems = my_count - count_done;
+        size_t count_step = DPU_MIN(hc->pipeline.buffer_size/dt_size, remaining_elems);
+        size_t bytes_step = count_step * dt_size;
+
+        void * src_addr  = lsync->rkeys.src_buf + src_offset;
+        void * tmp_addr  = hc->pipeline.stages[0].accbuf.buf;
+        void * tmp_addr2  = hc->pipeline.stages[0].getbuf[0].buf;
+        void * dst_addr  = lsync->rkeys.dst_buf + dst_offset;
+
+        CTX_LOG("Issue Get from %d src offset %lu count %lu bytes %lu\n",
+                team_rank, src_offset, my_count, bytes_step);
+        ucp_worker_fence(hc->ucp_worker);
+        ucp_req = ucp_get_nbx(
+            hc->localhost_ep, tmp_addr, bytes_step, (uint64_t)src_addr,
+            hc->src_rkey, &hc->req_param);
+        status = _dpu_request_wait(hc->ucp_worker, ucp_req);
+        if (status != UCS_OK) {
+            return UCC_ERR_NO_RESOURCE;
+        }
+
+        CTX_LOG("Calling sharp allreduce on team id %d team size %d count %lu\n",
+                lsync->team_id, team_size, count_step);
+        ucc_coll_args_t coll = {
+            .coll_type = UCC_COLL_TYPE_ALLREDUCE,
+            .src.info = {
+                .buffer   = tmp_addr,
+                .count    = count_step,
+                .datatype = dtype,
+                .mem_type = UCC_MEMORY_TYPE_HOST,
+            },
+            .dst.info = {
+                .buffer   = tmp_addr2,
+                .count    = count_step,
+                .datatype = dtype,
+                .mem_type = UCC_MEMORY_TYPE_HOST,
+            },
+        };
+
+        UCC_CHECK(ucc_collective_init(&coll, &request, team));
+        UCC_CHECK(ucc_collective_post(request));
+        ucc_context_progress(ctx->comm.ctx);
+        while (UCC_OK != ucc_collective_test(request)) {
+            ucc_context_progress(ctx->comm.ctx);
+        }
+        UCC_CHECK(ucc_collective_finalize(request));
+
+        CTX_LOG("Issue Put to host dst offset %lu dst offset %lu count %lu bytes %lu\n",
+                dst_offset, my_count, bytes_step);
+        ucp_worker_fence(hc->ucp_worker);
+        ucp_req = ucp_put_nbx(
+            hc->localhost_ep, tmp_addr2, bytes_step, (uint64_t)dst_addr,
+            hc->dst_rkey, &hc->req_param);
+        status = _dpu_request_wait(hc->ucp_worker, ucp_req);
+        if (status != UCS_OK) {
+            return UCC_ERR_NO_RESOURCE;
+        }
+
+        count_done += count_step;
+        src_offset += bytes_step;
+        dst_offset += bytes_step;
+    }
+
+    return UCC_OK;
+}
+
 
 static void dpu_coll_collect_host_rkeys(thread_ctx_t *ctx, dpu_put_sync_t *lsync)
 {
@@ -614,39 +707,41 @@ void *dpu_comm_thread(void *arg)
         }
 
         else if (coll_type == UCC_COLL_TYPE_ALLREDUCE) {
-            dpu_coll_collect_host_rkeys(ctx, lsync);
-            ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
-            assert(team != NULL);
-            UCC_CHECK(ucc_team_get_size(team, &dpu_team_size));
-            UCC_CHECK(ucc_team_get_my_ep(team, &dpu_team_rank));
+            // dpu_coll_collect_host_rkeys(ctx, lsync);
+            // ucc_team_h team = ctx->comm.team_pool[lsync->team_id];
+            // assert(team != NULL);
+            // UCC_CHECK(ucc_team_get_size(team, &dpu_team_size));
+            // UCC_CHECK(ucc_team_get_my_ep(team, &dpu_team_rank));
  
-            ucc_datatype_t dtype = lsync->coll_args.src.info.datatype;
-            size_t dt_size = dpu_ucc_dt_size(dtype);
-            hc->pipeline.my_count  = lsync->count_total / dpu_team_size;
-            hc->pipeline.my_offset = hc->pipeline.my_count * dt_size * dpu_team_rank;
-            if (dpu_team_rank == dpu_team_size - 1) {
-                hc->pipeline.my_count += lsync->count_total % dpu_team_size;
-            }
+            // ucc_datatype_t dtype = lsync->coll_args.src.info.datatype;
+            // size_t dt_size = dpu_ucc_dt_size(dtype);
+            // hc->pipeline.my_count  = lsync->count_total / dpu_team_size;
+            // hc->pipeline.my_offset = hc->pipeline.my_count * dt_size * dpu_team_rank;
+            // if (dpu_team_rank == dpu_team_size - 1) {
+            //     hc->pipeline.my_count += lsync->count_total % dpu_team_size;
+            // }
 
-            dpu_signal_comp_thread(ctx, thread_main_sync);
-            while (hc->pipeline.count_serviced < hc->pipeline.my_count) {
-                dpu_hc_progress_allreduce(ctx->hc, lsync, ctx);
-            }
-            dpu_hc_issue_hangup(ctx->hc, lsync, ctx);
+            // dpu_signal_comp_thread(ctx, thread_main_sync);
+            // while (hc->pipeline.count_serviced < hc->pipeline.my_count) {
+            //     dpu_hc_progress_allreduce(ctx->hc, lsync, ctx);
+            // }
+            // dpu_hc_issue_hangup(ctx->hc, lsync, ctx);
 
-            CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n",
-                    coll_id, coll_type);
-            dpu_waitfor_comp_thread(ctx, thread_main_sync);
+            dpu_coll_do_sharp_allreduce(ctx, lsync);
+
+            // CTX_LOG("Waiting for worker threads to complete coll id: %u, type: %d\n",
+            //         coll_id, coll_type);
+            // dpu_waitfor_comp_thread(ctx, thread_main_sync);
 
             CTX_LOG("Waiting for all ranks to complete coll id: %u, type: %d\n",
                     coll_id, coll_type);
-            dpu_coll_do_barrier(ctx, lsync);
+            // dpu_coll_do_barrier(ctx, lsync);
 
             dpu_mark_coll_done(ctx, lsync);
             CTX_LOG("End coll id: %u, type: %d, count total: %lu, count serviced: %zu\n",
                     coll_id, coll_type, count_total, (size_t)ctx->coll_sync->count_serviced);
 
-            dpu_coll_free_host_rkeys(ctx, lsync);
+            // dpu_coll_free_host_rkeys(ctx, lsync);
         }
 
         else if (coll_type == UCC_COLL_TYPE_ALLTOALL) {
