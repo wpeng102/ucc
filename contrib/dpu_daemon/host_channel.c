@@ -852,16 +852,18 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
     ucc_status_t status;
     ucs_status_ptr_t request;
     dpu_pipeline_t *pp = &hc->pipeline;
+    int nbufs = pp->num_buffers;
 
-    for (size_t i=0; i < pp->num_buffers; i++) {
+    for (size_t i=0; i < nbufs; i++) {
         ucp_worker_progress(hc->ucp_worker);
         ucc_context_progress(ctx->comm.ctx);
         dpu_buf_t *buf = &pp->buffers[i];
+        dpu_buf_t *buf2 = &pp->buffers[(i+nbufs-1)%nbufs];
 
         switch(buf->state) {
             case FREE:
                 _dpu_hc_get_remaining(hc, sync, &buf->count, &buf->offset);
-                if (buf->count > 0) {
+                if (buf->count > 0 && buf2->state != READING) {
                     DPU_LOG("Issue get for %ld bytes into buf %d offset %lu\n",
                             buf->count, i, buf->offset);
                     buf->state = READING;
@@ -880,8 +882,10 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
                 }
                 break;
             case READY:
-                buf->state = REDUCING;
-                dpu_hc_issue_allreduce(hc, sync, ctx, buf);
+                if (buf2->state != REDUCING) {
+                    buf->state = REDUCING;
+                    dpu_hc_issue_allreduce(hc, sync, ctx, buf);
+                }
                 break;
             case REDUCING:
                 if (dpu_check_comp_status(buf, ctx) == UCC_OK) {
@@ -893,8 +897,10 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
                 }
                 break;
             case REDUCED:
-                buf->state = WRITING;
-                dpu_hc_issue_put(hc, sync, buf);
+                if (buf2->state != WRITING) {
+                    buf->state = WRITING;
+                    dpu_hc_issue_put(hc, sync, buf);
+                }
                 break;
             case WRITING:
                 request = buf->ucp_req;
