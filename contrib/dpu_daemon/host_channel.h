@@ -110,13 +110,6 @@ typedef struct dpu_mem_segs_t {
     dpu_mem_t out;
 } dpu_mem_segs_t;
 
-typedef enum dpu_ar_phase_t {
-    WAIT,
-    INIT,
-    REDUCE,
-    BCAST,
-} dpu_ar_phase_t;
-
 typedef enum dpu_buf_state_t {
     FREE,
     READING,
@@ -137,30 +130,14 @@ typedef struct dpu_buf_t {
     size_t             offset;
 } dpu_buf_t;
 
-typedef struct dpu_stage_t {
-    dpu_buf_t accbuf;
-    dpu_buf_t getbuf[2];
-    
-    volatile dpu_ar_phase_t phase;
-    volatile int get_idx;
-    volatile int red_idx;
-    volatile int src_rank;
-    volatile int dst_rank;
-    
-    volatile int done_get;
-    volatile int done_red;
-    volatile int done_put;
-} dpu_stage_t;
-
 typedef struct dpu_pipeline_t {
     size_t              buffer_size;
     size_t              num_buffers;
+    dpu_buf_t          *buffers;
     ucs_status_ptr_t    sync_req;
     
-    dpu_stage_t         stages[2];
-    size_t              my_count;
-    size_t              my_offset;
-
+    size_t     my_count;
+    size_t     my_offset;
     size_t     count_requested;
     size_t     count_serviced;
 } dpu_pipeline_t;

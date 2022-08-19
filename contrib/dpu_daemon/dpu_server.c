@@ -161,7 +161,7 @@ static ucc_status_t dpu_coll_do_blocking_alltoall(thread_ctx_t *ctx, dpu_put_syn
             size_t bytes_step = count_step * dt_size;
 
             void * src_addr  = hc->host_rkeys[src_rank].src_buf + src_offset;
-            void * tmp_addr  = hc->pipeline.stages[0].accbuf.buf;
+            void * tmp_addr  = hc->pipeline.buffers[0].buf;
             void * dst_addr  = lsync->rkeys.dst_buf + dst_offset;
 
             DPU_LOG("Issue Get from %d src offset %lu count %lu bytes %lu\n",
@@ -245,7 +245,7 @@ static ucc_status_t dpu_coll_do_blocking_alltoallv(thread_ctx_t *ctx, dpu_put_sy
                     src_count, count_done, remaining_elems, count_step);
 
             void * src_addr  = hc->host_rkeys[src_rank].src_buf + src_offset;
-            void * tmp_addr  = hc->pipeline.stages[0].accbuf.buf;
+            void * tmp_addr  = hc->pipeline.buffers[0].buf;
             void * dst_addr  = lsync->rkeys.dst_buf + dst_offset;
 
             DPU_LOG("Issue Get from %d src offset %lu count %lu bytes %lu\n",
@@ -311,8 +311,7 @@ static ucc_status_t dpu_coll_do_sharp_allreduce(thread_ctx_t *ctx, dpu_put_sync_
         size_t bytes_step = count_step * dt_size;
 
         void * src_addr  = lsync->rkeys.src_buf + src_offset;
-        void * tmp_addr  = hc->pipeline.stages[0].accbuf.buf;
-        void * tmp_addr2  = hc->pipeline.stages[0].getbuf[0].buf;
+        void * tmp_addr  = hc->pipeline.buffers[0].buf;
         void * dst_addr  = lsync->rkeys.dst_buf + dst_offset;
 
         CTX_LOG("Issue Get from %d src offset %lu count %lu bytes %lu\n",
@@ -338,7 +337,7 @@ static ucc_status_t dpu_coll_do_sharp_allreduce(thread_ctx_t *ctx, dpu_put_sync_
                 .mem_type = UCC_MEMORY_TYPE_HOST,
             },
             .dst.info = {
-                .buffer   = tmp_addr2,
+                .buffer   = tmp_addr,
                 .count    = count_step,
                 .datatype = dtype,
                 .mem_type = UCC_MEMORY_TYPE_HOST,
@@ -357,7 +356,7 @@ static ucc_status_t dpu_coll_do_sharp_allreduce(thread_ctx_t *ctx, dpu_put_sync_
                 dst_offset, my_count, bytes_step);
         ucp_worker_fence(hc->ucp_worker);
         ucp_req = ucp_put_nbx(
-            hc->localhost_ep, tmp_addr2, bytes_step, (uint64_t)dst_addr,
+            hc->localhost_ep, tmp_addr, bytes_step, (uint64_t)dst_addr,
             hc->dst_rkey, &hc->req_param);
         status = _dpu_request_wait(hc->ucp_worker, ucp_req);
         if (status != UCS_OK) {

@@ -302,43 +302,29 @@ static void _dpu_hc_reset_buf(dpu_buf_t *buf)
     buf->ucc_req = NULL;
 }
 
-static void _dpu_hc_reset_stage(dpu_stage_t *stage, dpu_hc_t *hc)
-{
-    stage->phase = WAIT;
-    stage->get_idx = 0;
-    stage->red_idx = 1;
-    stage->src_rank = stage->dst_rank = hc->world_rank / hc->dpu_per_node_cnt;
-    stage->done_get = stage->done_red = stage->done_put = 0;
-    _dpu_hc_reset_buf(&stage->accbuf);
-    _dpu_hc_reset_buf(&stage->getbuf[0]);
-    _dpu_hc_reset_buf(&stage->getbuf[1]);
-}
-
 static void _dpu_hc_reset_pipeline(dpu_hc_t *hc)
 {
     dpu_pipeline_t *pipe = &hc->pipeline;
     for (int i=0; i<pipe->num_buffers; i++) {
-        _dpu_hc_reset_stage(&pipe->stages[i], hc);
+        _dpu_hc_reset_buf(&pipe->buffers[i]);
     }
     pipe->my_count = pipe->my_offset = 0;
     pipe->count_requested = pipe->count_serviced = 0;
-
-    /* Kickstart */
-    pipe->stages[0].phase = INIT;
 }
 
 static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
 {
     int i, ret;
+    dpu_pipeline_t *pipe = &hc->pipeline;
 
-    assert(hc->pipeline.buffer_size > 0);
-    assert(hc->pipeline.num_buffers > 0);
+    assert(pipe->buffer_size > 0);
+    assert(pipe->num_buffers > 0);
 
-    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.in, hc->pipeline.buffer_size * 3);
+    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.in, pipe->buffer_size * pipe->num_buffers);
     if (ret) {
         goto out;
     }
-    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.out, hc->pipeline.buffer_size * 3);
+    ret = _dpu_hc_buffer_alloc(hc, &hc->mem_segs.out, pipe->buffer_size * pipe->num_buffers); /* FIXME : Remove? */
     if (ret) {
         goto err_put;
     }
@@ -347,13 +333,10 @@ static  int _dpu_hc_init_pipeline(dpu_hc_t *hc)
         goto err_get;
     }
 
-    hc->pipeline.stages[0].accbuf.buf    = (char *)hc->mem_segs.in.base + hc->pipeline.buffer_size * 0;
-    hc->pipeline.stages[0].getbuf[0].buf = (char *)hc->mem_segs.in.base + hc->pipeline.buffer_size * 1;
-    hc->pipeline.stages[0].getbuf[1].buf = (char *)hc->mem_segs.in.base + hc->pipeline.buffer_size * 2;
-
-    hc->pipeline.stages[1].accbuf.buf    = (char *)hc->mem_segs.out.base + hc->pipeline.buffer_size * 0;
-    hc->pipeline.stages[1].getbuf[0].buf = (char *)hc->mem_segs.out.base + hc->pipeline.buffer_size * 1;
-    hc->pipeline.stages[1].getbuf[1].buf = (char *)hc->mem_segs.out.base + hc->pipeline.buffer_size * 2;
+    pipe->buffers = calloc(sizeof(dpu_buf_t), pipe->num_buffers);
+    for (i=0; i<pipe->num_buffers; i++) {
+        pipe->buffers[i].buf = (char*)hc->mem_segs.in.base + pipe->buffer_size * i;
+    }
 
     _dpu_hc_reset_pipeline(hc);
     goto out;
@@ -766,7 +749,7 @@ ucs_status_t dpu_hc_issue_get(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_buf_t *get
     DPU_LOG("Issue Get from offset %lu src %p dst %p count %lu bytes %lu\n",
             get_offset, src_addr, dst_addr, count, data_size);
     
-    // ucp_worker_fence(hc->ucp_worker);
+    ucp_worker_fence(hc->ucp_worker);
     getbuf->ucp_req =
             ucp_get_nbx(hc->localhost_ep, dst_addr, data_size,
             (uint64_t)src_addr, hc->src_rkey, &hc->req_param);
@@ -793,7 +776,7 @@ ucs_status_t dpu_hc_issue_put(dpu_hc_t *hc, dpu_put_sync_t *sync, dpu_buf_t *put
     // int32_t *pbuf = putbuf->buf;
     // DPU_LOG("## PUT DATA %ld %ld\n", pbuf[0], pbuf[1]);
     
-    // ucp_worker_fence(hc->ucp_worker);
+    ucp_worker_fence(hc->ucp_worker);
     putbuf->ucp_req =
             ucp_put_nbx(hc->localhost_ep, src_addr, data_size,
             (uint64_t)dst_addr, hc->dst_rkey, &hc->req_param);
@@ -862,7 +845,6 @@ ucc_status_t dpu_check_comp_status(dpu_buf_t *redbuf, thread_ctx_t *ctx)
     return status;
 }
 
-#if 0
 ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
                     dpu_put_sync_t *sync,
                     thread_ctx_t *ctx)
@@ -871,93 +853,20 @@ ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
     ucs_status_ptr_t request;
     dpu_pipeline_t *pp = &hc->pipeline;
 
-    for (int i=0; i<1; i++) {
-        if (ucp_worker_progress(hc->ucp_worker)) {
-            break;
-        }
-    }
-
-    dpu_stage_t *stage = &pp->stages[0];
-    //dpu_buf_t *getbuf = &stage->getbuf[stage->get_idx];
-    // dpu_buf_t *redbuf = &stage->getbuf[stage->red_idx];
-
-    for (int i=0; i<2; i++) {
-        dpu_buf_t *buf = &stage->getbuf[i];
-
-        if (buf->state == FREE) {
-            dpu_hc_issue_get(hc, sync, buf);
-        }
-
-        /* Progress Read from host */
-        if (buf->state == READING && buf->count > 0) {
-            request = buf->ucp_req;
-            if (_dpu_req_test(request) == UCS_OK) {
-                if (request) ucp_request_free(request);
-            buf->ucp_req = NULL;
-                buf->state = IDLE;
-                DPU_LOG("Received %ld bytes into buf %d offset %lu\n",
-                        buf->count, i, buf->offset);
-            }
-        }
-
-        if (buf->state == IDLE && buf->count > 0) {
-            dpu_hc_issue_allreduce(hc, sync, ctx, buf);
-        }
-
-        if (buf->state == REDUCING) {
-            /* Check for reduce completion */
-            if (dpu_check_comp_status(buf, ctx) == UCC_OK) {
-                UCC_CHECK(ucc_collective_finalize(buf->ucc_req));
-                buf->ucc_req = NULL;
-                buf->state = REDUCED;
-                DPU_LOG("Reduced %ld bytes from buf %d offset %lu\n",
-                        buf->count, i, buf->offset);
-            }
-        }
-
-        if (buf->state == REDUCED && buf->count > 0) {
-            dpu_hc_issue_put(hc, sync, buf);
-        }
-        
-        /* Progress Write to host */
-        if (buf->state == WRITING && buf->count > 0) {
-            request = buf->ucp_req;
-            if (_dpu_req_test(request) == UCS_OK) {
-                if (request) ucp_request_free(request);
-                buf->ucp_req = NULL;
-                buf->state = FREE;
-                pp->count_serviced += buf->count;
-                DPU_LOG("Sent %ld bytes from buf %d offset %lu\n",
-                        buf->count, i, buf->offset);
-            }
-        }
-
-    }
-
-}
-#endif
-
-
-ucs_status_t dpu_hc_progress_allreduce(dpu_hc_t *hc,
-                    dpu_put_sync_t *sync,
-                    thread_ctx_t *ctx)
-{
-    ucc_status_t status;
-    ucs_status_ptr_t request;
-    dpu_pipeline_t *pp = &hc->pipeline;
-    dpu_stage_t *stage = &pp->stages[0];
-
-    for (int i=0; i<2; i++) {
+    for (size_t i=0; i < pp->num_buffers; i++) {
         ucp_worker_progress(hc->ucp_worker);
-        dpu_buf_t *buf = &stage->getbuf[i];
+        ucc_context_progress(ctx->comm.ctx);
+        dpu_buf_t *buf = &pp->buffers[i];
 
         switch(buf->state) {
             case FREE:
                 _dpu_hc_get_remaining(hc, sync, &buf->count, &buf->offset);
                 if (buf->count > 0) {
+                    DPU_LOG("Issue get for %ld bytes into buf %d offset %lu\n",
+                            buf->count, i, buf->offset);
                     buf->state = READING;
-                    dpu_hc_issue_get(hc, sync, buf);
                     pp->count_requested += buf->count;
+                    dpu_hc_issue_get(hc, sync, buf);
                 }
                 break;
             case READING:
